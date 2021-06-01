@@ -20,6 +20,7 @@ enum Error {
     NoSetup,
     UnknownBlockType(String),
     InvalidBlock,
+    NonConstantOperator,
     UnnamedSprite,
     EntityHadMultiGo(String),
     UndefinedSprite(String),
@@ -89,7 +90,7 @@ impl HatType {
 
         let block_type = match first.attr("s") {
             Some(x) => x.value.as_str(),
-            None => return Err(Error::BlockWithNoType),
+            None => return Ok(None),
         };
 
         Ok(match block_type {
@@ -266,12 +267,77 @@ impl Netlogo {
                         res.push(']');
                         Ok(res)
                     }
+                    "reportNumbers" => {
+                        if script.children.len() != 2 { return Err(Error::InvalidBlock); }
+                        let low = self.parse_script_recursive(&script.children[0], my_name)?;
+                        let high = self.parse_script_recursive(&script.children[1], my_name)?;
+                        Ok(format!("(range {} ({}+1))", low, high))
+                    }
+                    "reportListIsEmpty" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidBlock); }
+                        let src = self.parse_script_recursive(&script.children[0], my_name)?;
+                        Ok(format!("(empty? {})", src))
+                    }
                     "doIfElse" => {
                         if script.children.len() != 3 { return Err(Error::InvalidBlock); }
                         let condition = self.parse_script_recursive(&script.children[0], my_name)?;
                         let case_1 = self.parse_script_recursive(&script.children[1], my_name)?;
                         let case_2 = self.parse_script_recursive(&script.children[2], my_name)?;
                         Ok(format!("ifelse {} [\n{}\n] [\n{}\n]", condition, Self::indent(&case_1), Self::indent(&case_2)))
+                    }
+                    "reportMonadic" => {
+                        if script.children.len() != 2 { return Err(Error::InvalidBlock); }
+                        let arg = self.parse_script_recursive(&script.children[1], my_name)?;
+                        let op = match script.get(&["l", "option"]) {
+                            None => return Err(Error::NonConstantOperator),
+                            Some(x) => x.text.as_str(),
+                        };
+                        Ok(match op {
+                            "abs" | "ceiling" | "floor" | "sqrt" | "sin" | "cos" | "tan" | "asin" | "acos" | "ln" => format!("({} {})", op, arg),
+                            "neg" => format!("(- {})", arg),
+                            "atan" => format!("(atan 1 {})", arg),
+                            "log" => format!("(log {} 10)", arg),
+                            "lg" => format!("(log {} 2)", arg),
+                            "e^" => format!("(exp {})", arg),
+                            "10^" => format!("(10 ^ {})", arg),
+                            "2^" => format!("(2 ^ {})", arg),
+                            "id" => arg,
+                            _ => return Err(Error::UnknownBlockType(format!("monadic <{}>", op))),
+                        })
+                    }
+                    "reportListItem" | "reportLetter" => {
+                        if script.children.len() != 2 { return Err(Error::InvalidBlock); }
+                        let src = self.parse_script_recursive(&script.children[1], my_name)?;
+                        match script.get(&["l", "option"]) {
+                            None => {
+                                let index = self.parse_script_recursive(&script.children[0], my_name)?;
+                                Ok(format!("(item ({}-1) {})", index, src))
+                            }
+                            Some(opt) => match opt.text.as_str() {
+                                "last" => Ok(format!("(last {})", src)),
+                                "any" => Ok(format!("(one-of {})", src)),
+                                x => return Err(Error::UnknownBlockType(format!("get item <{}>", x))),
+                            }
+                        }
+                    }
+                    "reportListContainsItem" => {
+                        if script.children.len() != 2 { return Err(Error::InvalidBlock); }
+                        let list = self.parse_script_recursive(&script.children[0], my_name)?;
+                        let val = self.parse_script_recursive(&script.children[1], my_name)?;
+                        Ok(format!("(member? {} {})", val, list))
+                    }
+                    "reportConcatenatedLists" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidBlock); }
+                        let list = &script.children[0];
+                        if list.name != "list" { return Err(Error::InvalidBlock); }
+
+                        let mut res = "(sentence".to_string();
+                        for item in list.children.iter() {
+                            res.push(' ');
+                            res += &self.parse_script_recursive(item, my_name)?;
+                        }
+                        res.push(')');
+                        Ok(res)
                     }
                     "doIf" => {
                         if script.children.len() != 2 { return Err(Error::InvalidBlock); }
@@ -295,7 +361,7 @@ impl Netlogo {
                         if low == "0" { Ok(format!("(random-float {})", high)) }
                         else { Ok(format!("({} + random-float ({} - {}))", low, high, low)) }
                     }
-                    "reportListLength" => {
+                    "reportListLength" | "reportStringSize" => {
                         if script.children.len() != 1 { return Err(Error::InvalidBlock); }
                         let src = self.parse_script_recursive(&script.children[0], my_name)?;
                         Ok(format!("(length {})", src))
@@ -311,13 +377,29 @@ impl Netlogo {
                         self.define_breed(&script.children[0], "patches".to_string())?;
                         Ok("".to_string())
                     }
+                    "reportRound" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidBlock); }
+                        let val = self.parse_script_recursive(&script.children[0], my_name)?;
+                        Ok(format!("(round {})", val))
+                    }
+                    "reportBoolean" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidBlock); }
+                        match script.get(&["l", "bool"]) {
+                            None => return Err(Error::NonConstantOperator),
+                            Some(x) => Ok(x.text.clone()),
+                        }
+                    }
                     "reportEquals" => self.parse_bin_op_recursive("=", script, my_name),
                     "reportLessThan" => self.parse_bin_op_recursive("<", script, my_name),
                     "reportGreaterThan" => self.parse_bin_op_recursive(">", script, my_name),
+                    "reportAnd" => self.parse_bin_op_recursive("and", script, my_name),
+                    "reportOr" => self.parse_bin_op_recursive("or", script, my_name),
                     "reportSum" => self.parse_bin_op_recursive("+", script, my_name),
                     "reportDifference" => self.parse_bin_op_recursive("-", script, my_name),
                     "reportProduct" => self.parse_bin_op_recursive("*", script, my_name),
                     "reportQuotient" => self.parse_bin_op_recursive("/", script, my_name),
+                    "reportModulus" => self.parse_bin_op_recursive("mod", script, my_name),
+                    "reportPower" => self.parse_bin_op_recursive("^", script, my_name),
                     "reportNot" => self.parse_unary_op_recursive("not", script, my_name),
                     "random-xcor" => Ok("random-xcor".to_string()),
                     "random-ycor" => Ok("random-ycor".to_string()),
