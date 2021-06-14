@@ -1,10 +1,24 @@
 [package]
-name = "netsblox-to-netlogo"
+name = "nb2nl"
 version = "0.1.0"
 authors = ["Devin Jean <emailcruzjean@yahoo.com>"]
 edition = "2018"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dragazo/nb2nl"
+documentation = "https://docs.rs/nb2nl"
+description = """
+A small crate for translating NetsBlox code into Netlogo source.
+"""
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "nb2nl"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nb2nl"
+path = "src/main.rs"
 
 [dependencies]
 xml-rs = "0.8.3"
