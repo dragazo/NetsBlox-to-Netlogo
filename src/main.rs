@@ -171,6 +171,12 @@ impl Netlogo {
                     "patch at %l" => Ok(String::new()),
                     "clear all" => Ok("clear-all".into()),
                     "kill self %l" => Ok("die".into()),
+                    "xPosition" => Ok("xcor".into()),
+                    "yPosition" => Ok("ycor".into()),
+                    "direction" => Ok("heading".into()),
+                    "reportMouseDown" => Ok("mouse-down?".into()),
+                    "reportMouseX" => Ok("mouse-xcor".into()),
+                    "reportMouseY" => Ok("mouse-ycor".into()),
                     "quoted %txt" => {
                         if script.children.len() != 1 { return Err(Error::InvalidBlock); }
                         let content = self.parse_script_recursive(&script.children[0], my_name)?;
@@ -245,17 +251,86 @@ impl Netlogo {
                     "rotate %l left %n degrees" => {
                         if script.children.len() != 2 { return Err(Error::InvalidBlock); }
                         let ang = self.parse_script_recursive(&script.children[1], my_name)?;
-                        Ok(format!("rt {}", ang))
+                        Ok(format!("lt {}", ang))
                     }
                     "rotate %l right %n degrees" => {
                         if script.children.len() != 2 { return Err(Error::InvalidBlock); }
                         let ang = self.parse_script_recursive(&script.children[1], my_name)?;
+                        Ok(format!("rt {}", ang))
+                    }
+                    "turn" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidBlock); }
+                        let ang = self.parse_script_recursive(&script.children[0], my_name)?;
+                        Ok(format!("rt {}", ang))
+                    }
+                    "turnLeft" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidBlock); }
+                        let ang = self.parse_script_recursive(&script.children[0], my_name)?;
                         Ok(format!("lt {}", ang))
+                    }
+                    "setHeading" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidBlock); }
+                        match script.get(&["l", "option"]) {
+                            Some(opt) => match opt.text.as_str() {
+                                "random" => Ok("set heading (random-float 360)".to_string()),
+                                x => return Err(Error::UnknownBlockType(format!("setHeading <{}>", x))),
+                            }
+                            None => {
+                                let val = self.parse_script_recursive(&script.children[0], my_name)?;
+                                Ok(format!("set heading {}", val))
+                            }
+                        }
+                    }
+                    "doFaceTowards" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidBlock); }
+                        match script.get(&["l", "option"]) {
+                            Some(opt) => match opt.text.as_str() {
+                                "center" => Ok("facexy 0 0".to_string()),
+                                "mouse-pointer" => Ok("facexy mouse-xcor mouse-ycor".to_string()),
+                                "random position" => Ok("set heading (random-float 360)".to_string()),
+                                x => return Err(Error::UnknownBlockType(format!("doFaceTowards <{}>", x))),
+                            }
+                            None => {
+                                let target = self.parse_script_recursive(&script.children[0], my_name)?;
+                                Ok(format!("face {}", target))
+                            }
+                        }
                     }
                     "wrapping move %l %n steps" => {
                         if script.children.len() != 2 { return Err(Error::InvalidBlock); }
                         let dist = self.parse_script_recursive(&script.children[1], my_name)?;
                         Ok(format!("fd {}", dist))
+                    }
+                    "forward" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidBlock); }
+                        let dist = self.parse_script_recursive(&script.children[0], my_name)?;
+                        Ok(format!("fd {}", dist))
+                    }
+                    "gotoXY" => {
+                        if script.children.len() != 2 { return Err(Error::InvalidBlock); }
+                        let x = self.parse_script_recursive(&script.children[0], my_name)?;
+                        let y = self.parse_script_recursive(&script.children[1], my_name)?;
+                        Ok(format!("setxy {} {}", x, y))
+                    }
+                    "changeXPosition" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidBlock); }
+                        let delta = self.parse_script_recursive(&script.children[0], my_name)?;
+                        Ok(format!("set xcor (xcor + {})", delta))
+                    }
+                    "setXPosition" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidBlock); }
+                        let val = self.parse_script_recursive(&script.children[0], my_name)?;
+                        Ok(format!("set xcor {}", val))
+                    }
+                    "changeYPosition" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidBlock); }
+                        let delta = self.parse_script_recursive(&script.children[0], my_name)?;
+                        Ok(format!("set ycor (ycor + {})", delta))
+                    }
+                    "setYPosition" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidBlock); }
+                        let val = self.parse_script_recursive(&script.children[0], my_name)?;
+                        Ok(format!("set ycor {}", val))
                     }
                     "reportNewList" => {
                         if script.children.len() != 1 { return Err(Error::InvalidBlock); }
@@ -271,7 +346,7 @@ impl Netlogo {
                         if script.children.len() != 2 { return Err(Error::InvalidBlock); }
                         let low = self.parse_script_recursive(&script.children[0], my_name)?;
                         let high = self.parse_script_recursive(&script.children[1], my_name)?;
-                        Ok(format!("(range {} ({}+1))", low, high))
+                        Ok(format!("(range {} ({} + 1))", low, high))
                     }
                     "reportListIsEmpty" => {
                         if script.children.len() != 1 { return Err(Error::InvalidBlock); }
@@ -284,6 +359,19 @@ impl Netlogo {
                         let case_1 = self.parse_script_recursive(&script.children[1], my_name)?;
                         let case_2 = self.parse_script_recursive(&script.children[2], my_name)?;
                         Ok(format!("ifelse {} [\n{}\n] [\n{}\n]", condition, Self::indent(&case_1), Self::indent(&case_2)))
+                    }
+                    "reportIfElse" => {
+                        if script.children.len() != 3 { return Err(Error::InvalidBlock); }
+                        let condition = self.parse_script_recursive(&script.children[0], my_name)?;
+                        let case_1 = self.parse_script_recursive(&script.children[1], my_name)?;
+                        let case_2 = self.parse_script_recursive(&script.children[2], my_name)?;
+                        Ok(format!("(ifelse-value {} [ {} ] [ {} ])", condition, case_1, case_2))
+                    }
+                    "doRepeat" => {
+                        if script.children.len() != 2 { return Err(Error::InvalidBlock); }
+                        let count = self.parse_script_recursive(&script.children[0], my_name)?;
+                        let action = self.parse_script_recursive(&script.children[1], my_name)?;
+                        Ok(format!("repeat {} [\n{}\n]", count, Self::indent(&action)))
                     }
                     "reportMonadic" => {
                         if script.children.len() != 2 { return Err(Error::InvalidBlock); }
@@ -388,6 +476,26 @@ impl Netlogo {
                             None => return Err(Error::NonConstantOperator),
                             Some(x) => Ok(x.text.clone()),
                         }
+                    }
+                    "doFor" => {
+                        if script.children.len() != 4 { return Err(Error::InvalidBlock); }
+                        let var = self.parse_script_recursive(&script.children[0], my_name)?;
+                        let low = self.parse_script_recursive(&script.children[1], my_name)?;
+                        let high = self.parse_script_recursive(&script.children[2], my_name)?;
+                        let action = self.parse_script_recursive(&script.children[3], my_name)?;
+                        Ok(format!("foreach (range {} ({} + 1)) [ {} ->\n{}\n]", low, high, var, Self::indent(&action)))
+                    }
+                    "doForEach" => {
+                        if script.children.len() != 3 { return Err(Error::InvalidBlock); }
+                        let var = self.parse_script_recursive(&script.children[0], my_name)?;
+                        let range = self.parse_script_recursive(&script.children[1], my_name)?;
+                        let action = self.parse_script_recursive(&script.children[2], my_name)?;
+                        Ok(format!("foreach {} [ {} ->\n{}\n]", range, var, Self::indent(&action)))
+                    }
+                    "doForever" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidBlock); }
+                        let action = self.parse_script_recursive(&script.children[0], my_name)?;
+                        Ok(format!("loop [\n{}\n]", Self::indent(&action)))
                     }
                     "reportEquals" => self.parse_bin_op_recursive("=", script, my_name),
                     "reportLessThan" => self.parse_bin_op_recursive("<", script, my_name),
