@@ -20,5 +20,9 @@ path = "src/lib.rs"
 name = "nb2nl"
 path = "src/main.rs"
 
+[build-dependencies]
+lalrpop = "0.19.6"
+
 [dependencies]
 xml-rs = "0.8.3"
+lalrpop-util = "0.19.6"

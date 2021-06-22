@@ -1,0 +1,119 @@
+use super::*;
+
+grammar;
+
+pub Program = Item*;
+
+match {
+    r";[^\n\r]*[\n\r]*" => {},
+    r"\s+" => {},
+    r"[\p{alpha}.?=*!<>:#+/%_^'&-]+-own",
+}
+else {
+    _
+}
+
+Item: Item = {
+    Globals => Item::Globals(<>),
+    Breed => Item::Breed(<>),
+    Own => Item::Own(<>),
+    Function => Item::Function(<>),
+};
+
+Globals: Globals = <l:@L> "globals" "[" <idents:Ident*> "]" <r:@R> => Globals { idents, raw_span: Span(l, r) };
+Breed: Breed = <l:@L> "breed" "[" <plural:Ident> <singular:Ident> "]" <r:@R> => Breed { plural, singular, raw_span: Span(l, r) };
+Own: Own = {
+    <l:@L> <owner:r"[\p{alpha}.?=*!<>:#+/%_^'&-]+-own"> <rowner:@R> "[" <props:Ident*> "]" <r:@R> => {
+        Own { plural_owner: Ident { id: owner[..owner.len()-4].into(), raw_span: Span(l, rowner - 4) }, props, raw_span: Span(l, r) }
+    }
+};
+Function: Function = {
+    <l:@L> "to" <name:Ident> <stmts:Stmt*> "end" <r:@R> => Function { name, params: vec![], reports: false, stmts, raw_span: Span(l, r) },
+    <l:@L> "to" <name:Ident> "[" <params:Ident*> "]" <stmts:Stmt*> "end" <r:@R> => Function { name, params, reports: false, stmts, raw_span: Span(l, r) },
+
+    <l:@L> "to-report" <name:Ident> <stmts:Stmt*> "end" <r:@R> => Function { name, params: vec![], reports: true, stmts, raw_span: Span(l, r) },
+    <l:@L> "to-report" <name:Ident> "[" <params:Ident*> "]" <stmts:Stmt*> "end" <r:@R> => Function { name, params, reports: true, stmts, raw_span: Span(l, r) },
+};
+
+Stmt: Stmt = {
+    Report => Stmt::Report(<>),
+    IfElse => Stmt::IfElse(<>),
+    FnCall => Stmt::FnCall(<>),
+    Ident => Stmt::FnCall(FnCall { name: <>, args: vec![] }),
+    VarDecl => Stmt::VarDecl(<>),
+    Assign => Stmt::Assign(<>),
+    Repeat => Stmt::Repeat(<>),
+};
+
+Report: Report = <l:@L> "report" <value:Expr> => Report { value, lspan: l };
+IfElse: IfElse = {
+    <l:@L> "if" <condition:Expr> "[" <then:Stmt*> "]" <r:@R> => IfElse { condition, then, otherwise: None, raw_span: Span(l, r) },
+    <l:@L> "ifelse" <condition:Expr> "[" <then:Stmt*> "]" "[" <otherwise:Stmt*> "]" <r:@R> => IfElse { condition, then, otherwise: Some(otherwise), raw_span: Span(l, r) },
+};
+VarDecl: VarDecl = <l:@L> "let" <name:Ident> <value:Expr> => VarDecl { name, value, lspan: l };
+Assign: Assign = <l:@L> "set" <name:Ident> <value:Expr> => Assign { name, value, lspan: l };
+Repeat: Repeat = <l:@L> "repeat" <count:Expr> "[" <stmts:Stmt*> "]" <r:@R> => Repeat { count, stmts, raw_span: Span(l, r) };
+
+Expr: Expr = {
+    <l:@L>"ifelse-value" <cond:Logic> "[" <a:Expr> "]" "[" <b:Expr> "]" <r:@R> => Expr::Choice { condition: Box::new(cond), a: Box::new(a), b: Box::new(b), raw_span: Span(l, r) },
+    Logic,
+};
+Logic: Expr = {
+    <a:Logic> "and" <b:CmpEq> => Expr::And { a: Box::new(a), b: Box::new(b) },
+    <a:Logic> "or" <b:CmpEq> => Expr::Or { a: Box::new(a), b: Box::new(b) },
+    <a:Logic> "xor" <b:CmpEq> => Expr::Xor { a: Box::new(a), b: Box::new(b) },
+    CmpEq,
+};
+CmpEq: Expr = {
+    <a:CmpEq> "=" <b:Cmp> => Expr::Equ { a: Box::new(a), b: Box::new(b) },
+    <a:CmpEq> "!=" <b:Cmp> => Expr::Neq { a: Box::new(a), b: Box::new(b) },
+    Cmp,
+};
+Cmp: Expr = {
+    <a:Cmp> "<" <b:Sum> => Expr::Less { a: Box::new(a), b: Box::new(b) },
+    <a:Cmp> "<=" <b:Sum> => Expr::LessEq { a: Box::new(a), b: Box::new(b) },
+    <a:Cmp> ">" <b:Sum> => Expr::Great { a: Box::new(a), b: Box::new(b) },
+    <a:Cmp> ">=" <b:Sum> => Expr::GreatEq { a: Box::new(a), b: Box::new(b) },
+    Sum,
+};
+Sum: Expr = {
+    <a:Sum> "+" <b:Product> => Expr::Add { a: Box::new(a), b: Box::new(b) },
+    <a:Sum> "-" <b:Product> => Expr::Sub { a: Box::new(a), b: Box::new(b) },
+    Product,
+};
+Product: Expr = {
+    <a:Product> "*" <b:Power> => Expr::Mul { a: Box::new(a), b: Box::new(b) },
+    <a:Product> "/" <b:Power> => Expr::Div { a: Box::new(a), b: Box::new(b) },
+    <a:Product> "mod" <b:Power> => Expr::Mod { a: Box::new(a), b: Box::new(b) },
+    Power,
+}
+Power: Expr = {
+    <a:Power> "^" <b:Term> => Expr::Pow { a: Box::new(a), b: Box::new(b) },
+    Term,
+};
+Term: Expr = {
+    <l:@L> "not" <val:Atom> => Expr::Not { val: Box::new(val), lspan: l },
+    Atom,
+};
+Atom: Expr = {
+    Value => Expr::Value(<>),
+    FnCall => Expr::FnCall(<>),
+    "(" <Expr> ")" => <>,
+};
+
+FnCall: FnCall = "(" <name:Ident> <args:Expr+> ")" => FnCall { name, args };
+
+Value: Value = {
+    Ident => Value::Ident(<>),
+    Number => Value::Number(<>),
+    Text => Value::Text(<>),
+    List => Value::List(<>),
+};
+
+Ident: Ident = <l:@L> <v:r"[\p{alpha}.?=*!<>:#+/%_^'&-]+"> <r:@R> => Ident { id: String::from(v), raw_span: Span(l, r) };
+Number: Number = <l:@L> <v:r"[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?"> <r:@R> => Number { value: String::from(v), raw_span: Span(l, r) };
+Text: Text = <l:@L> <v:r#""(\\[\\nrt"']|[^\\"\r\n])*""#> <r:@R> => Text { content: clean_string(v), raw_span: Span(l, r) };
+List: List = {
+    <l:@L> "(" "list" <values:Expr*> ")" <r:@R> => List { values, raw_span: Span(l, r) },
+    <l:@L> "[" <values:Expr*> "]" <r:@R> => List { values, raw_span: Span(l, r) },
+};
