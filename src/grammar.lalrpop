@@ -7,8 +7,14 @@ pub Program = Item*;
 match {
     r";[^\n\r]*[\n\r]*" => {},
     r"\s+" => {},
-    r"[\p{alpha}.?=*!<>:#+/%_^'&-][\p{alpha}\p{digit}.?=*!<>:#+/%_^'&-]*-own",
+    r"create-ordered-[\p{alpha}.?=*!<>:#+/%_^'&-][\p{alpha}\p{digit}.?=*!<>:#+/%_^'&-]*" => "CREATE-ORDERED-IDENT",
     r"-?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?",
+}
+else {
+    r"create-[\p{alpha}.?=*!<>:#+/%_^'&-][\p{alpha}\p{digit}.?=*!<>:#+/%_^'&-]*" => "CREATE-IDENT",
+}
+else {
+    r"[\p{alpha}.?=*!<>:#+/%_^'&-][\p{alpha}\p{digit}.?=*!<>:#+/%_^'&-]*-own" => "IDENT-OWN",
 }
 else {
     _
@@ -24,8 +30,8 @@ Item: Item = {
 Globals: Globals = <l:@L> "globals" "[" <idents:Ident*> "]" <r:@R> => Globals { idents, raw_span: Span(l, r) };
 Breed: Breed = <l:@L> "breed" "[" <plural:Ident> <singular:Ident> "]" <r:@R> => Breed { plural, singular, raw_span: Span(l, r) };
 Own: Own = {
-    <l:@L> <owner:r"[\p{alpha}.?=*!<>:#+/%_^'&-][\p{alpha}\p{digit}.?=*!<>:#+/%_^'&-]*-own"> <rowner:@R> "[" <props:Ident*> "]" <r:@R> => {
-        Own { plural_owner: Ident { id: owner[..owner.len()-4].into(), raw_span: Span(l, rowner - 4) }, props, raw_span: Span(l, r) }
+    <l:@L> <owner:"IDENT-OWN"> "[" <props:Ident*> "]" <r:@R> => {
+        Own { plural_owner: Ident { id: owner[..owner.len()-4].into(), raw_span: Span(l, l + owner.len() - 4) }, props, raw_span: Span(l, r) }
     }
 };
 Function: Function = {
@@ -44,6 +50,7 @@ Stmt: Stmt = {
     VarDecl => Stmt::VarDecl(<>),
     Assign => Stmt::Assign(<>),
     Repeat => Stmt::Repeat(<>),
+    Create => Stmt::Create(<>),
 };
 
 Report: Report = <l:@L> "report" <value:Expr> => Report { value, lspan: l };
@@ -54,9 +61,19 @@ IfElse: IfElse = {
 VarDecl: VarDecl = <l:@L> "let" <name:Ident> <value:Expr> => VarDecl { name, value, lspan: l };
 Assign: Assign = <l:@L> "set" <name:Ident> <value:Expr> => Assign { name, value, lspan: l };
 Repeat: Repeat = <l:@L> "repeat" <count:Expr> "[" <stmts:Stmt*> "]" <r:@R> => Repeat { count, stmts, raw_span: Span(l, r) };
+Create: Create = <l:@L> <h:CreateHelper> <count:Expr> "[" <stmts:Stmt*> "]" <r:@R> => {
+    Create { breed_plural: h.0, ordered: h.1, count, stmts, raw_span: Span(l, r) }
+};
+
+CreateHelper: (Ident, bool) = {
+    <l:@L> <raw:"CREATE-ORDERED-IDENT"> => (Ident { id: raw[15..].into(), raw_span: Span(l + 15, l + raw.len()) }, true),
+    <l:@L> <raw:"CREATE-IDENT"> => (Ident { id: raw[7..].into(), raw_span: Span(l + 7, l + raw.len()) }, false),
+};
 
 Expr: Expr = {
-    <l:@L>"ifelse-value" <cond:Logic> "[" <a:Expr> "]" "[" <b:Expr> "]" <r:@R> => Expr::Choice { condition: Box::new(cond), a: Box::new(a), b: Box::new(b), raw_span: Span(l, r) },
+    <l:@L>"ifelse-value" <cond:Logic> "[" <a:Expr> "]" "[" <b:Expr> "]" <r:@R> => {
+        Expr::Choice { condition: Box::new(cond), a: Box::new(a), b: Box::new(b), raw_span: Span(l, r) }
+    },
     Logic,
 };
 Logic: Expr = {

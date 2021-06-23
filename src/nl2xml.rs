@@ -99,6 +99,7 @@ pub enum Stmt {
     VarDecl(VarDecl),
     Assign(Assign),
     Repeat(Repeat),
+    Create(Create),
 }
 impl Spanned for Stmt {
     fn span(&self) -> Span {
@@ -109,6 +110,7 @@ impl Spanned for Stmt {
             Stmt::VarDecl(x) => x.span(),
             Stmt::Assign(x) => x.span(),
             Stmt::Repeat(x) => x.span(),
+            Stmt::Create(x) => x.span(),
         }
     }
 }
@@ -118,8 +120,9 @@ impl Spanned for Stmt {
 #[derive(Debug, Clone)] pub struct VarDecl { name: Ident, value: Expr, lspan: usize }
 #[derive(Debug, Clone)] pub struct Assign { name: Ident, value: Expr, lspan: usize }
 #[derive(Debug, Clone)] pub struct Repeat { count: Expr, stmts: Vec<Stmt>, raw_span: Span }
+#[derive(Debug, Clone)] pub struct Create { breed_plural: Ident, ordered: bool, count: Expr, stmts: Vec<Stmt>, raw_span: Span }
 
-raw_span_impl! { IfElse, Repeat }
+raw_span_impl! { IfElse, Repeat, Create }
 impl Spanned for Report { fn span(&self) -> Span { Span(self.lspan, self.value.span().1) } }
 impl Spanned for VarDecl { fn span(&self) -> Span { Span(self.lspan, self.value.span().1) } }
 impl Spanned for Assign { fn span(&self) -> Span { Span(self.lspan, self.value.span().1) } }
@@ -237,6 +240,7 @@ pub fn parse(program: &str) -> Result<Vec<Item>, Error> {
     match &res[0] {
         Item::Own(own) => {
             assert_eq!(own.plural_owner.id, "patches");
+            assert_eq!(&prog[own.plural_owner.span().to_range()], "patches");
             assert_eq!(own.props.len(), 3);
         }
         x => panic!("{:?}", x),
@@ -244,15 +248,18 @@ pub fn parse(program: &str) -> Result<Vec<Item>, Error> {
     match &res[1] {
         Item::Own(own) => {
             assert_eq!(own.plural_owner.id, "turtles");
-            assert_eq!(&prog[own.plural_owner.raw_span.to_range()], "turtles");
+            assert_eq!(&prog[own.plural_owner.span().to_range()], "turtles");
             assert_eq!(own.props.len(), 1);
             assert_eq!(own.props[0].id, "경험치");
-            assert_eq!(&prog[own.props[0].raw_span.to_range()], "경험치");
+            assert_eq!(&prog[own.props[0].span().to_range()], "경험치");
         }
         x => panic!("{:?}", x),
     }
     match &res[2] {
-        Item::Own(own) => assert_eq!(own.plural_owner.id, "dogs"),
+        Item::Own(own) => {
+            assert_eq!(own.plural_owner.id, "dogs");
+            assert_eq!(&prog[own.plural_owner.span().to_range()], "dogs");
+        }
         x => panic!("{:?}", x),
     }
 }
@@ -273,8 +280,7 @@ pub fn parse(program: &str) -> Result<Vec<Item>, Error> {
         x => panic!("{:?}", x),
     };
     assert_eq!(go.name.id, "go");
-    assert_eq!(go.params.len(), 1);
-    assert_eq!(go.params[0].id, "x");
+    assert_eq!(go.params.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), &["x"]);
     assert_eq!(go.reports, true);
     assert_eq!(go.stmts.len(), 7);
 
@@ -442,9 +448,7 @@ pub fn parse(program: &str) -> Result<Vec<Item>, Error> {
         x => panic!("{:?}", x),
     };
     assert_eq!(go.name.id, "?");
-    assert_eq!(go.params.len(), 2);
-    assert_eq!(go.params[0].id, "x");
-    assert_eq!(go.params[1].id, "y");
+    assert_eq!(go.params.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), &["x", "y"]);
     assert_eq!(go.reports, true);
     assert_eq!(go.stmts.len(), 6);
 
@@ -471,6 +475,57 @@ pub fn parse(program: &str) -> Result<Vec<Item>, Error> {
                     }
                     x => panic!("{:?}", x),
                 }
+            }
+            x => panic!("{:?}", x),
+        }
+    }
+}
+#[test] fn test_create() {
+    let prog = r#"
+    to <> [x y]
+        create-turtles         56  [ (fd 10) ]
+        create-ordered-turtles 56  [ (fd 10) ]
+        create-wumbos          eax [ (fd 10) ]
+        create-ordered-wumbos  eax [ (fd 10) ]
+    end
+    "#;
+    let res = parse(prog).unwrap();
+    assert_eq!(res.len(), 1);
+    let go = match &res[0] {
+        Item::Function(f) => f,
+        x => panic!("{:?}", x),
+    };
+    assert_eq!(go.name.id, "<>");
+    assert_eq!(go.params.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), &["x", "y"]);
+    assert_eq!(go.reports, false);
+    assert_eq!(go.stmts.len(), 4);
+
+    for (i, ord) in [(0, false), (1, true)].iter().copied() {
+        match &go.stmts[i] {
+            Stmt::Create(Create { breed_plural, ordered, count, stmts, .. }) => {
+                assert_eq!(breed_plural.id, "turtles");
+                assert_eq!(&prog[breed_plural.span().to_range()], "turtles");
+                assert_eq!(*ordered, ord);
+                match count {
+                    Expr::Value(Value::Number(val)) => assert_eq!(val.value, "56"),
+                    x => panic!("{:?}", x),
+                }
+                assert_eq!(stmts.len(), 1);
+            }
+            x => panic!("{:?}", x),
+        }
+    }
+    for (i, ord) in [(2, false), (3, true)].iter().copied() {
+        match &go.stmts[i] {
+            Stmt::Create(Create { breed_plural, ordered, count, stmts, .. }) => {
+                assert_eq!(breed_plural.id, "wumbos");
+                assert_eq!(&prog[breed_plural.span().to_range()], "wumbos");
+                assert_eq!(*ordered, ord);
+                match count {
+                    Expr::Value(Value::Ident(ident)) => assert_eq!(ident.id, "eax"),
+                    x => panic!("{:?}", x),
+                }
+                assert_eq!(stmts.len(), 1);
             }
             x => panic!("{:?}", x),
         }
