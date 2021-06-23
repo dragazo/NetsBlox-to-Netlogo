@@ -150,6 +150,7 @@ pub enum Expr {
     Pow { a: Box<Expr>, b: Box<Expr> },
 
     Not { val: Box<Expr>, lspan: usize },
+    Neg { val: Box<Expr>, lspan: usize },
 
     FnCall(FnCall),
     Value(Value),
@@ -181,6 +182,7 @@ impl Spanned for Expr {
             Expr::Pow { a, b } => Span(a.span().0, b.span().1),
 
             Expr::Not { val, lspan } => Span(*lspan, val.span().1),
+            Expr::Neg { val, lspan } => Span(*lspan, val.span().1),
 
             Expr::FnCall(x) => x.span(),
             Expr::Value(x) => x.span(),
@@ -257,7 +259,7 @@ pub fn parse(program: &str) -> Result<Vec<Item>, Error> {
 #[test] fn test_fn_call() {
     let res = parse(r#"
     to-report go [x]
-        report (list x 1.23 2+3 energy-vals 경험치 "hello world" (list 1 2))
+        report (list -x7 1.23 2 + 3 energy-vals 경험치 "hello world" (list 1 2))
         report (list)
         report (go x - 1)
         clear-all
@@ -327,8 +329,8 @@ pub fn parse(program: &str) -> Result<Vec<Item>, Error> {
 #[test] fn test_vars() {
     let res = parse(r#"
     to go ;func with no args
-        let foo [1 2 3 4]
-        set foo foo + 1
+        let foo [1 -4 -5. -6.e2]
+        set foo -foo + 1
     end"#).unwrap();
     assert_eq!(res.len(), 1);
     let go = match &res[0] {
@@ -344,7 +346,17 @@ pub fn parse(program: &str) -> Result<Vec<Item>, Error> {
         Stmt::VarDecl(VarDecl { name, value, .. }) => {
             assert_eq!(name.id, "foo");
             match value {
-                Expr::Value(Value::List(list)) => assert_eq!(list.values.len(), 4),
+                Expr::Value(Value::List(list)) => {
+                    assert_eq!(list.values.len(), 4);
+                    for (i, (a, b)) in ["1", "-4", "-5.", "-6.e2"].iter().zip(&list.values).enumerate() {
+                        match b {
+                            Expr::Value(Value::Number(Number { value, .. })) => if value != a {
+                                panic!("{}: {} {}", i, a, value);
+                            }
+                            _ => panic!("{}: {:?}", i, b),
+                        }
+                    }
+                }
                 x => panic!("{:?}", x),
             }
         }
@@ -355,7 +367,7 @@ pub fn parse(program: &str) -> Result<Vec<Item>, Error> {
             assert_eq!(name.id, "foo");
             match value {
                 Expr::Add { a, .. } => match &**a {
-                    Expr::Value(Value::Ident(ident)) => assert_eq!(ident.id, "foo"),
+                    Expr::Value(Value::Ident(ident)) => assert_eq!(ident.id, "-foo"),
                     x => panic!("{:?}", x),
                 }
                 x => panic!("{:?}", x),
@@ -366,20 +378,24 @@ pub fn parse(program: &str) -> Result<Vec<Item>, Error> {
 }
 #[test] fn test_loops() {
     let res = parse(r#"
-    to-report go-circle
-        let merp 10
-        repeat 36 [ (fd 1) (rt merp) ]
+    to-report go-circle7
+        let ->f 10
+        repeat 36 [ (fd 1) (rt ->f) ]
     end"#).unwrap();
     assert_eq!(res.len(), 1);
     let go = match &res[0] {
         Item::Function(f) => f,
         x => panic!("{:?}", x),
     };
-    assert_eq!(go.name.id, "go-circle");
+    assert_eq!(go.name.id, "go-circle7");
     assert_eq!(go.params.len(), 0);
     assert_eq!(go.reports, true);
     assert_eq!(go.stmts.len(), 2);
 
+    match &go.stmts[0] {
+        Stmt::VarDecl(VarDecl { name, .. }) => assert_eq!(name.id, "->f"),
+        x => panic!("{:?}", x),
+    }
     match &go.stmts[1] {
         Stmt::Repeat(Repeat { count, stmts, .. }) => {
             match count {
@@ -399,7 +415,7 @@ pub fn parse(program: &str) -> Result<Vec<Item>, Error> {
                     assert_eq!(name.id, "rt");
                     assert_eq!(args.len(), 1);
                     match &args[0] {
-                        Expr::Value(Value::Ident(ident)) => assert_eq!(ident.id, "merp"),
+                        Expr::Value(Value::Ident(ident)) => assert_eq!(ident.id, "->f"),
                         x => panic!("{:?}", x),
                     }
                 }
@@ -407,5 +423,56 @@ pub fn parse(program: &str) -> Result<Vec<Item>, Error> {
             }
         }
         x => panic!("{:?}", x),
+    }
+}
+#[test] fn test_neg() {
+    let res = parse(r#"
+    to-report ? [x y]
+        set x -y
+        set -x -y
+        set x (-y)
+        set -x (-y)
+        set x (- y)
+        set -x (- y)
+    end
+    "#).unwrap();
+    assert_eq!(res.len(), 1);
+    let go = match &res[0] {
+        Item::Function(f) => f,
+        x => panic!("{:?}", x),
+    };
+    assert_eq!(go.name.id, "?");
+    assert_eq!(go.params.len(), 2);
+    assert_eq!(go.params[0].id, "x");
+    assert_eq!(go.params[1].id, "y");
+    assert_eq!(go.reports, true);
+    assert_eq!(go.stmts.len(), 6);
+
+    for (i, x, y) in [(0, "x", "-y"), (1, "-x", "-y"), (2, "x", "-y"), (3, "-x", "-y")].iter().copied() {
+        match &go.stmts[i] {
+            Stmt::Assign(Assign { name, value, .. }) => {
+                assert_eq!(name.id, x);
+                match value {
+                    Expr::Value(Value::Ident(ident)) => assert_eq!(ident.id, y),
+                    x => panic!("{:?}", x),
+                }
+            }
+            x => panic!("{:?}", x),
+        }
+    }
+    for (i, x, y) in [(4, "x", "y"), (5, "-x", "y")].iter().copied() {
+        match &go.stmts[i] {
+            Stmt::Assign(Assign { name, value, .. }) => {
+                assert_eq!(name.id, x);
+                match value {
+                    Expr::Neg { val, .. } => match &**val {
+                        Expr::Value(Value::Ident(ident)) => assert_eq!(ident.id, y),
+                        x => panic!("{:?}", x),
+                    }
+                    x => panic!("{:?}", x),
+                }
+            }
+            x => panic!("{:?}", x),
+        }
     }
 }

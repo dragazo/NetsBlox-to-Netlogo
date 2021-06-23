@@ -7,7 +7,8 @@ pub Program = Item*;
 match {
     r";[^\n\r]*[\n\r]*" => {},
     r"\s+" => {},
-    r"[\p{alpha}.?=*!<>:#+/%_^'&-]+-own",
+    r"[\p{alpha}.?=*!<>:#+/%_^'&-][\p{alpha}\p{digit}.?=*!<>:#+/%_^'&-]*-own",
+    r"-?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?",
 }
 else {
     _
@@ -23,7 +24,7 @@ Item: Item = {
 Globals: Globals = <l:@L> "globals" "[" <idents:Ident*> "]" <r:@R> => Globals { idents, raw_span: Span(l, r) };
 Breed: Breed = <l:@L> "breed" "[" <plural:Ident> <singular:Ident> "]" <r:@R> => Breed { plural, singular, raw_span: Span(l, r) };
 Own: Own = {
-    <l:@L> <owner:r"[\p{alpha}.?=*!<>:#+/%_^'&-]+-own"> <rowner:@R> "[" <props:Ident*> "]" <r:@R> => {
+    <l:@L> <owner:r"[\p{alpha}.?=*!<>:#+/%_^'&-][\p{alpha}\p{digit}.?=*!<>:#+/%_^'&-]*-own"> <rowner:@R> "[" <props:Ident*> "]" <r:@R> => {
         Own { plural_owner: Ident { id: owner[..owner.len()-4].into(), raw_span: Span(l, rowner - 4) }, props, raw_span: Span(l, r) }
     }
 };
@@ -93,6 +94,7 @@ Power: Expr = {
 };
 Term: Expr = {
     <l:@L> "not" <val:Atom> => Expr::Not { val: Box::new(val), lspan: l },
+    "(" <l:@L> "-" <val:Atom> ")" <r:@R> => Expr::Neg { val: Box::new(val), lspan: l },
     Atom,
 };
 Atom: Expr = {
@@ -110,8 +112,8 @@ Value: Value = {
     List => Value::List(<>),
 };
 
-Ident: Ident = <l:@L> <v:r"[\p{alpha}.?=*!<>:#+/%_^'&-]+"> <r:@R> => Ident { id: String::from(v), raw_span: Span(l, r) };
-Number: Number = <l:@L> <v:r"[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?"> <r:@R> => Number { value: String::from(v), raw_span: Span(l, r) };
+Ident: Ident = <l:@L> <v:r"[\p{alpha}.?=*!<>:#+/%_^'&-][\p{alpha}\p{digit}.?=*!<>:#+/%_^'&-]*"> <r:@R> => Ident { id: String::from(v), raw_span: Span(l, r) };
+Number: Number = <l:@L> <v:r"-?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?"> <r:@R> => Number { value: String::from(v), raw_span: Span(l, r) };
 Text: Text = <l:@L> <v:r#""(\\[\\nrt"']|[^\\"\r\n])*""#> <r:@R> => Text { content: clean_string(v), raw_span: Span(l, r) };
 List: List = {
     <l:@L> "(" "list" <values:Expr*> ")" <r:@R> => List { values, raw_span: Span(l, r) },
