@@ -1,11 +1,9 @@
 use std::ops::Range;
 
-lalrpop_mod!(grammar);
+lalrpop_mod!(grammar, "/nl2xml/grammar.rs");
 
 use lalrpop_util::ParseError;
 use lalrpop_util::lexer::Token;
-
-pub type Error<'a> = ParseError<usize, Token<'a>, &'a str>;
 
 fn clean_string(s: &str) -> String {
     assert!(s.len() >= 2);
@@ -32,27 +30,13 @@ fn clean_string(s: &str) -> String {
     }
     res
 }
-fn quote_string(s: &str) -> String {
-    let mut res = String::new();
-    res.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => { res.push('\\'); res.push('"'); }
-            '\r' => { res.push('\\'); res.push('r'); }
-            '\n' => { res.push('\\'); res.push('n'); }
-            '\t' => { res.push('\\'); res.push('t'); }
-            _ => res.push(c),
-        }
-    }
-    res.push('"');
-    res
-}
-fn indent(s: &str) -> String {
-    s.lines().map(|x| format!("    {}", x)).collect::<Vec<_>>().join("\n")
-}
 
+/// Source location of a program construct.
+/// 
+/// This is given as byte offsets into the program.
+/// You can use the [`Span::to_range`] method to slice the original program string and get the relevant portion.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct Span(usize, usize);
+pub struct Span(pub usize, pub usize);
 impl Span {
     pub fn to_range(&self) -> Range<usize> { self.0..self.1 }
 }
@@ -84,10 +68,10 @@ impl Spanned for Item {
     }
 }
 
-#[derive(Debug, Clone)] pub struct Globals { idents: Vec<Ident>, raw_span: Span }
-#[derive(Debug, Clone)] pub struct Breed { plural: Ident, singular: Ident, raw_span: Span }
-#[derive(Debug, Clone)] pub struct Own { plural_owner: Ident, props: Vec<Ident>, raw_span: Span }
-#[derive(Debug, Clone)] pub struct Function { name: Ident, params: Vec<Ident>, reports: bool, stmts: Vec<Stmt>, raw_span: Span }
+#[derive(Debug, Clone)] pub struct Globals { pub idents: Vec<Ident>, pub raw_span: Span }
+#[derive(Debug, Clone)] pub struct Breed { pub plural: Ident, pub singular: Ident, pub raw_span: Span }
+#[derive(Debug, Clone)] pub struct Own { pub plural_owner: Ident, pub props: Vec<Ident>, pub raw_span: Span }
+#[derive(Debug, Clone)] pub struct Function { pub name: Ident, pub params: Vec<Ident>, pub reports: bool, pub stmts: Vec<Stmt>, pub raw_span: Span }
 
 raw_span_impl! { Globals, Breed, Own, Function }
 
@@ -115,12 +99,12 @@ impl Spanned for Stmt {
     }
 }
 
-#[derive(Debug, Clone)] pub struct Report { value: Expr, lspan: usize }
-#[derive(Debug, Clone)] pub struct IfElse { condition: Expr, then: Vec<Stmt>, otherwise: Option<Vec<Stmt>>, raw_span: Span }
-#[derive(Debug, Clone)] pub struct VarDecl { name: Ident, value: Expr, lspan: usize }
-#[derive(Debug, Clone)] pub struct Assign { name: Ident, value: Expr, lspan: usize }
-#[derive(Debug, Clone)] pub struct Repeat { count: Expr, stmts: Vec<Stmt>, raw_span: Span }
-#[derive(Debug, Clone)] pub struct Create { breed_plural: Ident, ordered: bool, count: Expr, stmts: Vec<Stmt>, raw_span: Span }
+#[derive(Debug, Clone)] pub struct Report { pub value: Expr, pub lspan: usize }
+#[derive(Debug, Clone)] pub struct IfElse { pub condition: Expr, pub then: Vec<Stmt>, pub otherwise: Option<Vec<Stmt>>, pub raw_span: Span }
+#[derive(Debug, Clone)] pub struct VarDecl { pub name: Ident, pub value: Expr, pub lspan: usize }
+#[derive(Debug, Clone)] pub struct Assign { pub name: Ident, pub value: Expr, pub lspan: usize }
+#[derive(Debug, Clone)] pub struct Repeat { pub count: Expr, pub stmts: Vec<Stmt>, pub raw_span: Span }
+#[derive(Debug, Clone)] pub struct Create { pub breed_plural: Ident, pub ordered: bool, pub count: Expr, pub stmts: Vec<Stmt>, pub raw_span: Span }
 
 raw_span_impl! { IfElse, Repeat, Create }
 impl Spanned for Report { fn span(&self) -> Span { Span(self.lspan, self.value.span().1) } }
@@ -219,14 +203,14 @@ impl Spanned for Value {
     }
 }
 
-#[derive(Debug, Clone)] pub struct Ident { id: String, raw_span: Span }
-#[derive(Debug, Clone)] pub struct Number { value: String, raw_span: Span }
-#[derive(Debug, Clone)] pub struct Text { content: String, raw_span: Span }
-#[derive(Debug, Clone)] pub struct List { values: Vec<Expr>, raw_span: Span }
+#[derive(Debug, Clone)] pub struct Ident { pub id: String, pub raw_span: Span }
+#[derive(Debug, Clone)] pub struct Number { pub value: String, pub raw_span: Span }
+#[derive(Debug, Clone)] pub struct Text { pub content: String, pub raw_span: Span }
+#[derive(Debug, Clone)] pub struct List { pub values: Vec<Expr>, pub raw_span: Span }
 
 raw_span_impl! { Ident, Number, Text, List }
 
-pub fn parse(program: &str) -> Result<Vec<Item>, Error> {
+pub fn parse(program: &str) -> Result<Vec<Item>, ParseError<usize, Token, &str>> {
     grammar::ProgramParser::new().parse(program)
 }
 
@@ -234,7 +218,7 @@ pub fn parse(program: &str) -> Result<Vec<Item>, Error> {
     let prog = r#"
     patches-own [ mud sticks mud-sticks ]
     turtles-own [ 경험치 ]
-    dogs-own [ bones ]"#;
+    dogs-own [ boNes ]"#;
     let res = parse(prog).unwrap();
     assert_eq!(res.len(), 3);
     match &res[0] {
@@ -259,6 +243,9 @@ pub fn parse(program: &str) -> Result<Vec<Item>, Error> {
         Item::Own(own) => {
             assert_eq!(own.plural_owner.id, "dogs");
             assert_eq!(&prog[own.plural_owner.span().to_range()], "dogs");
+            assert_eq!(own.props.len(), 1);
+            assert_eq!(own.props[0].id, "bones");
+            assert_eq!(&prog[own.props[0].span().to_range()], "boNes");
         }
         x => panic!("{:?}", x),
     }

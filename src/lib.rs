@@ -8,6 +8,7 @@
 //! This crate serves as a translation bridge so that projects can be written in simple block-based NetsBlox code, but can be translated into and run by Netlogo.
 
 #[macro_use] extern crate lalrpop_util;
+#[macro_use] extern crate lazy_static;
 
 pub mod xml2nl;
 pub mod nl2xml;

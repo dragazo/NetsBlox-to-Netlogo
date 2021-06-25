@@ -129,7 +129,7 @@ Value: Value = {
     List => Value::List(<>),
 };
 
-Ident: Ident = <l:@L> <v:r"[\p{alpha}.?=*!<>:#+/%_^'&-][\p{alpha}\p{digit}.?=*!<>:#+/%_^'&-]*"> <r:@R> => Ident { id: String::from(v), raw_span: Span(l, r) };
+Ident: Ident = <l:@L> <v:r"[\p{alpha}.?=*!<>:#+/%_^'&-][\p{alpha}\p{digit}.?=*!<>:#+/%_^'&-]*"> <r:@R> => Ident { id: v.to_lowercase(), raw_span: Span(l, r) };
 Number: Number = <l:@L> <v:r"-?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?"> <r:@R> => Number { value: String::from(v), raw_span: Span(l, r) };
 Text: Text = <l:@L> <v:r#""(\\[\\nrt"']|[^\\"\r\n])*""#> <r:@R> => Text { content: clean_string(v), raw_span: Span(l, r) };
 List: List = {

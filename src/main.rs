@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::BufReader;
 
-use nb2nl::xml2nl::Netlogo;
+use nb2nl::{xml2nl::Netlogo, nl2xml};
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();
@@ -18,7 +18,8 @@ fn main() {
     }
     else if input.ends_with(".nlogo") {
         let content = std::fs::read_to_string(input).expect("failed to open file");
-
+        let xml = nl2xml::parse(&input[..input.len()-6], &content).expect("failed to translate");
+        println!("{}", xml);
     }
     else {
         eprintln!("unknown input file type");
