@@ -69,24 +69,24 @@ impl<'a> From<ParseError<usize, Token<'a>, &'a str>> for Error<'a> {
 }
 
 #[derive(Default)]
-struct EntityInfo { props: LinkedHashMap<String, Ident> }
+struct EntityInfo<'a> { props: LinkedHashMap<&'a str, &'a Ident> }
 
-struct GlobalSymbol { ident: Ident }
-struct BreedSymbol { ident: Ident, is_plural: bool, info: Rc<RefCell<EntityInfo>> }
+struct GlobalSymbol<'a> { ident: &'a Ident }
+struct BreedSymbol<'a> { ident: &'a Ident, is_plural: bool, info: Rc<RefCell<EntityInfo<'a>>> }
 
 #[derive(Default)]
-pub struct Program {
-    globals: LinkedHashMap<String, GlobalSymbol>,
-    breeds: LinkedHashMap<String, BreedSymbol>,
-    funcs: LinkedHashMap<String, Function>,
-    patches: EntityInfo,
+pub struct Program<'a> {
+    globals: LinkedHashMap<&'a str, GlobalSymbol<'a>>,
+    breeds: LinkedHashMap<&'a str, BreedSymbol<'a>>,
+    funcs: LinkedHashMap<&'a str, &'a Function>,
+    patches: EntityInfo<'a>,
 }
-impl Program {
+impl<'a> Program<'a> {
     // checks for validity in (only) the global scope
-    fn validate_define_global<'a>(&self, ident: &Ident) -> Result<(), Error<'a>> {
-        let prev = self.globals.get(&ident.id).map(|s| &s.ident)
-            .or(self.breeds.get(&ident.id).map(|s| &s.ident))
-            .or(self.funcs.get(&ident.id).map(|s| &s.name));
+    fn validate_define_global<'b>(&self, ident: &Ident) -> Result<(), Error<'b>> {
+        let prev = self.globals.get(ident.id.as_str()).map(|s| s.ident)
+            .or(self.breeds.get(ident.id.as_str()).map(|s| s.ident))
+            .or(self.funcs.get(ident.id.as_str()).map(|s| &s.name));
         if let Some(prev) = prev {
             return Err(Error::Redefine { name: ident.clone(), previous: prev.clone() });
         }
@@ -95,7 +95,7 @@ impl Program {
         }
         Ok(())
     }
-    fn validate_define_lexical<'a>(&self, ident: &Ident, scopes: &[LinkedHashMap<&str, &Ident>]) -> Result<(), Error<'a>> {
+    fn validate_define_lexical<'b>(&self, ident: &Ident, scopes: &[LinkedHashMap<&str, &Ident>]) -> Result<(), Error<'b>> {
         for scope in scopes.iter().rev() {
             if let Some(&prev) = scope.get(ident.id.as_str()) {
                 return Err(Error::Redefine { name: ident.clone(), previous: prev.clone() });
@@ -103,14 +103,14 @@ impl Program {
         }
         self.validate_define_global(ident)
     }
-    fn ensure_var_defined<'a>(&self, scopes: &[LinkedHashMap<&str, &Ident>], ident: &Ident) -> Result<(), Error<'a>> {
+    fn ensure_var_defined<'b>(&self, scopes: &[LinkedHashMap<&str, &Ident>], ident: &Ident) -> Result<(), Error<'b>> {
         for scope in scopes.iter().rev() {
             if scope.contains_key(ident.id.as_str()) { return Ok(()) }
         }
         if self.globals.contains_key(ident.id.as_str()) { return Ok(()) }
         Err(Error::VariableNoTDefined { name: ident.clone() })
     }
-    fn format_func_call<'a>(&self, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, func: &Function, args: &[Expr], invoke_span: Span) -> Result<String, Error<'a>> {
+    fn format_func_call<'b>(&self, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, func: &Function, args: &[Expr], invoke_span: Span) -> Result<String, Error<'b>> {
         if func.params.len() != args.len() {
             return Err(Error::FunctionArgCount { func: func.name.clone(), invoke_span, got: args.len(), expected: func.params.len() });
         }
@@ -122,7 +122,7 @@ impl Program {
         res += "</custom-block>";
         Ok(res)
     }
-    fn generate_expr_script<'a>(&self, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, expr: &Expr) -> Result<String, Error<'a>> {
+    fn generate_expr_script<'b>(&self, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, expr: &Expr) -> Result<String, Error<'b>> {
         Ok(match expr {
             Expr::Choice { condition, a, b, .. } => format!(r#"<block s="reportIfElse">{}{}{}</block>"#, self.generate_expr_script(scopes, condition)?, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
 
@@ -175,7 +175,7 @@ impl Program {
             }
         })
     }
-    fn generate_script<'a, 'b>(&self, scopes: &mut Vec<LinkedHashMap<&'b str, &'b Ident>>, stmts: &'b [Stmt], func: &Function) -> Result<String, Error<'a>> {
+    fn generate_script<'b>(&self, scopes: &mut Vec<LinkedHashMap<&'a str, &'a Ident>>, stmts: &'a [Stmt], func: &Function) -> Result<String, Error<'b>> {
         scopes.push(Default::default()); // generate a new scope for this script
 
         let mut script = String::new();
@@ -222,36 +222,36 @@ impl Program {
         scopes.pop(); // remove the scope we created
         Ok(script)
     }
-    fn parse(input: &str) -> Result<Program, Error> {
+    fn init_global<'b>(items: &[Item]) -> Result<Program, Error<'b>> {
         let mut program = Program::default();
-        let mut owns: Vec<Own> = Vec::with_capacity(16);
-    
+        let mut owns: Vec<&Own> = Vec::with_capacity(16);
+
         // initial pass - collect all the globals, breeds, and functions (names at global scope)
-        for item in ast::parse(input)? {
+        for item in items {
             match item {
                 Item::Globals(Globals { idents, .. }) => for ident in idents {
-                    program.validate_define_global(&ident)?;
-                    assert!(program.globals.insert(ident.id.clone(), GlobalSymbol { ident }).is_none());
+                    program.validate_define_global(ident)?;
+                    assert!(program.globals.insert(&ident.id, GlobalSymbol { ident }).is_none());
                 }
                 Item::Breed(Breed { plural, singular, .. }) => {
                     let info = Rc::new(RefCell::new(EntityInfo::default()));
                     for (ident, is_plural) in [(plural, true), (singular, false)] {
                         program.validate_define_global(&ident)?;
-                        assert!(program.breeds.insert(ident.id.clone(), BreedSymbol { ident, is_plural, info: info.clone() }).is_none());
+                        assert!(program.breeds.insert(&ident.id, BreedSymbol { ident, is_plural, info: info.clone() }).is_none());
                     }
                 }
                 Item::Function(func) => {
                     program.validate_define_global(&func.name)?;
-                    assert!(program.funcs.insert(func.name.id.clone(), func).is_none());
+                    assert!(program.funcs.insert(&func.name.id, func).is_none());
                 }
                 Item::Own(own) => owns.push(own), // just gather these up for after the first pass
             }
         }
         // process all the own drectives we stored
         for own in owns {
-            fn add_props(target: &mut LinkedHashMap<String, Ident>, props: Vec<Ident>) {
+            fn add_props<'a>(target: &mut LinkedHashMap<&'a str, &'a Ident>, props: &'a [Ident]) {
                 for prop in props {
-                    target.insert(prop.id.clone(), prop);
+                    target.insert(&prop.id, prop);
                 }
             }
             
@@ -260,15 +260,15 @@ impl Program {
             }
             match own.plural_owner.id.as_str() {
                 "turtles" => for target in program.breeds.values() {
-                    add_props(&mut target.info.borrow_mut().props, own.props.clone());
+                    add_props(&mut target.info.borrow_mut().props, &own.props);
                 },
-                "patches" => add_props(&mut program.patches.props, own.props),
-                "turtle" | "patch" => return Err(Error::ExpectedPlural { name: own.plural_owner }),
+                "patches" => add_props(&mut program.patches.props, &own.props),
+                "turtle" | "patch" => return Err(Error::ExpectedPlural { name: own.plural_owner.clone() }),
                 x => match program.breeds.get(x) {
-                    None => return Err(Error::BreedNotDefined { name: own.plural_owner }),
+                    None => return Err(Error::BreedNotDefined { name: own.plural_owner.clone() }),
                     Some(target) => {
-                        if !target.is_plural { return Err(Error::ExpectedPlural { name: own.plural_owner }) }
-                        add_props(&mut target.info.borrow_mut().props, own.props.clone());
+                        if !target.is_plural { return Err(Error::ExpectedPlural { name: own.plural_owner.clone() }) }
+                        add_props(&mut target.info.borrow_mut().props, &own.props);
                     }
                 }
             }
@@ -278,11 +278,13 @@ impl Program {
     }
 }
 
-pub fn parse<'a>(project_name: &str, input: &'a str) -> Result<String, Error<'a>> {
-    let program = Program::parse(input)?;
+pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>> {
+    let items = ast::parse(input)?;
+    let program = Program::init_global(&items)?;
+    
     let mut custom_blocks = String::new();
-
     let mut scopes = Vec::with_capacity(16);
+
     for func in program.funcs.values() {
         assert!(scopes.is_empty());
         scopes.push(Default::default()); // add a new scope for the function parameters
@@ -312,7 +314,7 @@ pub fn parse<'a>(project_name: &str, input: &'a str) -> Result<String, Error<'a>
 }
 
 #[test] fn test_prog_header() {
-    let res = Program::parse(r#"
+    let items = ast::parse(r#"
     breed [goats goat]
     breed [merps merp]
     turtles-own [ mtdews ]
@@ -323,6 +325,7 @@ pub fn parse<'a>(project_name: &str, input: &'a str) -> Result<String, Error<'a>
         report "rosebud"
     end
     "#).unwrap();
+    let res = Program::init_global(&items).unwrap();
 
     assert_eq!(res.breeds.len(), 4);
     
