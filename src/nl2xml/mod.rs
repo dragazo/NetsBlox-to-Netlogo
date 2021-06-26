@@ -12,6 +12,8 @@ pub use ast::{Ident, Span};
 
 use lalrpop_util::{ParseError, lexer::Token};
 
+use xml::escape::escape_str_attribute as escape_xml;
+
 lazy_static! {
     static ref BUILTIN_NAMES: HashSet<&'static str> = {
         let mut s = HashSet::new();
@@ -26,13 +28,39 @@ lazy_static! {
     };
 }
 
+fn get_func_def_name(func: &Function) -> String {
+    let mut res = func.name.id.clone();
+    for param in func.params.iter() {
+        write!(res, " %&apos;{}&apos;", param.id).unwrap();
+    }
+    res
+}
+fn get_func_name(func: &Function) -> String {
+    let mut res = String::with_capacity(func.name.id.len() + 3 * func.params.len());
+    res.clone_from(&func.name.id);
+    for _ in 0..func.params.len() {
+        res += " %s";
+    }
+    res
+}
+
 #[derive(Debug)]
 pub enum Error<'a> {
     Parse(ParseError<usize, Token<'a>, &'a str>),
+
     Redefine { name: Ident, previous: Ident },
     RedefineBuiltin { name: Ident },
-    BreedNotDefined { name: Ident },
+
     ExpectedPlural { name: Ident },
+    BreedNotDefined { name: Ident },
+    VariableNoTDefined { name: Ident },
+    FunctionNotDefined { name: Ident },
+
+    FunctionArgCount { func: Ident, invoke_span: Span, got: usize, expected: usize },
+    NonReporterInExpr { func: Ident, invoke_span: Span },
+    
+    ReportInNonReporter { func: Ident, report_span: Span },
+    UnreachableCode { func: Ident, unreachable_span: Span },
 }
 impl<'a> From<ParseError<usize, Token<'a>, &'a str>> for Error<'a> {
     fn from(e: ParseError<usize, Token<'a>, &'a str>) -> Self {
@@ -75,25 +103,125 @@ impl Program {
         }
         self.validate_define_global(ident)
     }
+    fn ensure_var_defined<'a>(&self, scopes: &[LinkedHashMap<&str, &Ident>], ident: &Ident) -> Result<(), Error<'a>> {
+        for scope in scopes.iter().rev() {
+            if scope.contains_key(ident.id.as_str()) { return Ok(()) }
+        }
+        if self.globals.contains_key(ident.id.as_str()) { return Ok(()) }
+        Err(Error::VariableNoTDefined { name: ident.clone() })
+    }
+    fn format_func_call<'a>(&self, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, func: &Function, args: &[Expr], invoke_span: Span) -> Result<String, Error<'a>> {
+        if func.params.len() != args.len() {
+            return Err(Error::FunctionArgCount { func: func.name.clone(), invoke_span, got: args.len(), expected: func.params.len() });
+        }
 
-    // fn validate_expr_recursive<'a>(&self, scopes: &Vec<HashMap<&str, &Ident>>, expr: &Expr) -> Result<(), Error<'a>> {
-    //     match expr {
-    //         Expr::Value(Value::List(list)) => for item in list {
-    //             self.validate_expr_recursive(scopes, item)?;
-    //         },
-    //         Expr::Value(Value::Text(_) | Value::Number(_)) => Ok(()),
-    //     }
-    // }
-    // fn validate_func_recursive<'a>(&self, scopes: &mut Vec<HashMap<&str, &Ident>>, stmts: &[Stmt]) -> Result<(), Error<'a>> {
-    //     for stmt in stmts {
-    //         match stmt {
-    //             Stmt::VarDecl(VarDecl { name, value, lspan: _ }) => {
+        let mut res = format!(r#"<custom-block s="{}">"#, get_func_name(func));
+        for arg in args.iter() {
+            res += &self.generate_expr_script(scopes, arg)?;
+        }
+        res += "</custom-block>";
+        Ok(res)
+    }
+    fn generate_expr_script<'a>(&self, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, expr: &Expr) -> Result<String, Error<'a>> {
+        Ok(match expr {
+            Expr::Choice { condition, a, b, .. } => format!(r#"<block s="reportIfElse">{}{}{}</block>"#, self.generate_expr_script(scopes, condition)?, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
 
-    //             }
-    //         }
-    //     }
-    //     Ok(())
-    // }
+            Expr::And { a, b, .. } => format!(r#"<block s="reportAnd">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
+            Expr::Or { a, b, .. } => format!(r#"<block s="reportOr">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
+            Expr::Xor { a, b, .. } | Expr::Neq { a, b, .. } => format!(r#"<block s="reportNot"><block s="reportEquals">{}{}</block></block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
+            Expr::Equ { a, b, .. } => format!(r#"<block s="reportEquals">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
+            
+            Expr::Less { a, b, .. } => format!(r#"<block s="reportLessThan">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
+            Expr::LessEq { a, b, .. } => format!(r#"<block s="reportNot"><block s="reportGreaterThan">{}{}</block></block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
+            Expr::Great { a, b, .. } => format!(r#"<block s="reportGreaterThan">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
+            Expr::GreatEq { a, b, .. } => format!(r#"<block s="reportNot"><block s="reportLessThan">{}{}</block></block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
+
+            Expr::Add { a, b, .. } => format!(r#"<block s="reportSum">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
+            Expr::Sub { a, b, .. } => format!(r#"<block s="reportDifference">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
+            
+            Expr::Mul { a, b, .. } => format!(r#"<block s="reportProduct">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
+            Expr::Div { a, b, .. } => format!(r#"<block s="reportQuotient">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
+            Expr::Mod { a, b, .. } => format!(r#"<block s="reportModulus">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
+            
+            Expr::Pow { a, b, .. } => format!(r#"<block s="reportPower">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
+            
+            Expr::Not { val, .. } => format!(r#"<block s="reportNot">{}</block>"#, self.generate_expr_script(scopes, val)?),
+            Expr::Neg { val, .. } => format!(r#"<block s="reportMonadic"><l><option>neg</option></l>{}</block>"#, self.generate_expr_script(scopes, val)?),
+
+            Expr::FnCall(call) => match self.funcs.get(call.name.id.as_str()) {
+                None => return Err(Error::FunctionNotDefined { name: call.name.clone() }),
+                Some(func) => {
+                    if !func.reports { return Err(Error::NonReporterInExpr { func: func.name.clone(), invoke_span: call.span() }) }
+                    self.format_func_call(scopes, func, &call.args, call.span())?
+                }
+            }
+
+            Expr::Value(Value::Number(num)) => format!("<l>{}</l>", escape_xml(&num.value)),
+            Expr::Value(Value::Text(text)) => format!("<l>{}</l>", escape_xml(&text.content)),
+            Expr::Value(Value::List(list)) => {
+                let mut res = r#"<block s="reportNewList"><list>"#.to_string();
+                for value in &list.values {
+                    res += &self.generate_expr_script(scopes, value)?;
+                }
+                res += "</list></block>";
+                res
+            }
+            Expr::Value(Value::Ident(ident)) => match ident.id.as_str() {
+                x @ ("true" | "false") => format!(r#"<block s="reportBoolean"><l><bool>{}</bool></l></block>"#, x),
+                _ => {
+                    self.ensure_var_defined(&*scopes, ident)?;
+                    format!(r#"<block var="{}"/>"#, ident.id)
+                }
+            }
+        })
+    }
+    fn generate_script<'a, 'b>(&self, scopes: &mut Vec<LinkedHashMap<&'b str, &'b Ident>>, stmts: &'b [Stmt], func: &Function) -> Result<String, Error<'a>> {
+        scopes.push(Default::default()); // generate a new scope for this script
+
+        let mut script = String::new();
+        let mut has_terminated = false;
+
+        for stmt in stmts {
+            if has_terminated { return Err(Error::UnreachableCode { func: func.name.clone(), unreachable_span: stmt.span() }) }
+            match stmt {
+                Stmt::Report(report) => {
+                    if !func.reports { return Err(Error::ReportInNonReporter { func: func.name.clone(), report_span: report.span() }) }
+                    write!(script, r#"<block s="doReport">{}</block>"#, self.generate_expr_script(scopes, &report.value)?).unwrap();
+                    has_terminated = true;
+                }
+                Stmt::IfElse(ifelse) => match &ifelse.otherwise {
+                    None => write!(script, r#"<block s="doIf">{}<script>{}</script></block>"#,
+                        self.generate_expr_script(scopes, &ifelse.condition)?, self.generate_script(scopes, &ifelse.then, func)?).unwrap(),
+                    Some(otherwise) => write!(script, r#"<block s="doIfElse">{}<script>{}</script><script>{}</script></block>"#,
+                        self.generate_expr_script(scopes, &ifelse.condition)?, self.generate_script(scopes, &ifelse.then, func)?, self.generate_script(scopes, otherwise, func)?).unwrap(),
+                }
+                Stmt::FnCall(call) => match self.funcs.get(call.name.id.as_str()) {
+                    None => return Err(Error::FunctionNotDefined { name: call.name.clone() }),
+                    Some(func) => match (func.reports, self.format_func_call(scopes, func, &call.args, call.span())?) {
+                        (true, x) => write!(script, r#"<block s="doRun"><block s="reifyReporter"><autolambda>{}</autolambda></block></block>"#, x).unwrap(),
+                        (false, x) => script += &x,
+                    }
+                }
+                Stmt::VarDecl(vardecl) => {
+                    let value_script = self.generate_expr_script(scopes, &vardecl.value)?; // must evaluate before defining the symbol
+
+                    self.validate_define_lexical(&vardecl.name, scopes)?;
+                    scopes.last_mut().unwrap().insert(&vardecl.name.id, &vardecl.name);
+
+                    write!(script, r#"<block s="doDeclareVariables"><list><l>{name}</l></list></block><block s="doSetVar"><l>{name}</l>{value}</block>"#,
+                        name = escape_xml(&vardecl.name.id), value = value_script).unwrap();
+                }
+                Stmt::Assign(assign) => {
+                    self.ensure_var_defined(scopes, &assign.name)?;
+                    write!(script, r#"<block s="doSetVar"><l>{}</l>{}</block>"#, assign.name.id, self.generate_expr_script(scopes, &assign.value)?).unwrap();
+                }
+                x => panic!("unimplemented stmt: {:?}", x),
+            }
+        }
+
+        scopes.pop(); // remove the scope we created
+        Ok(script)
+    }
     fn parse(input: &str) -> Result<Program, Error> {
         let mut program = Program::default();
         let mut owns: Vec<Own> = Vec::with_capacity(16);
@@ -157,28 +285,24 @@ pub fn parse<'a>(project_name: &str, input: &'a str) -> Result<String, Error<'a>
     let mut scopes = Vec::with_capacity(16);
     for func in program.funcs.values() {
         assert!(scopes.is_empty());
-        scopes.push(LinkedHashMap::with_capacity(16));
+        scopes.push(Default::default()); // add a new scope for the function parameters
 
-    // <block-definition s="this-reports" type="reporter" category="operators">
-    //     <code></code>
-    //     <inputs></inputs>
-    // </block-definition>
-
-        let block_name = format!("{} {}", func.name.id,
-            func.params.iter().map(|p| format!("%&apos;{}&apos;", p.id)).collect::<Vec<_>>().join(" "));
-        write!(custom_blocks, r#"<block-definition s="{}" type="{}" category="custom"><code>"#,
-            block_name.trim_end(), if func.reports { "reporter" } else { "command" }).unwrap();
+        write!(custom_blocks, r#"<block-definition s="{}" type="{}" category="custom"><inputs>{}</inputs>"#,
+            get_func_def_name(func), if func.reports { "reporter" } else { "command" },
+            r#"<input type="%s"></input>"#.repeat(func.params.len())).unwrap();
 
         for param in func.params.iter() {
             program.validate_define_lexical(param, &scopes)?;
             assert!(scopes.last_mut().unwrap().insert(&param.id, param).is_none());
         }
-        //program.validate_func_recursive(&mut scopes, &func.stmts)?;
+        let script = program.generate_script(&mut scopes, &func.stmts, &func)?;
+        if !script.is_empty() { // if we generate an empty <script> tag it makes it uneditable in NetsBlox
+            write!(custom_blocks, "<script>{}</script>", script).unwrap();
+        }
 
-        write!(custom_blocks, "</code><inputs>{}</inputs></block-definition>",
-            r#"<input type="%s"></input>"#.repeat(func.params.len()).as_str()).unwrap();
+        write!(custom_blocks, "</block-definition>").unwrap();
 
-        scopes.pop();
+        scopes.pop(); // remove the scope we added
     }
 
     Ok(format!(include_str!("template.xml"),

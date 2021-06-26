@@ -177,7 +177,7 @@ impl Spanned for Expr {
     }
 }
 
-#[derive(Debug, Clone)] pub struct FnCall { name: Ident, args: Vec<Expr> }
+#[derive(Debug, Clone)] pub struct FnCall { pub name: Ident, pub args: Vec<Expr> }
 impl Spanned for FnCall {
     fn span(&self) -> Span {
         let s = self.name.span();

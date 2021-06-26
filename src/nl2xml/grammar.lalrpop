@@ -76,7 +76,7 @@ Expr: Expr = {
     },
     Logic,
 };
-Logic: Expr = {
+Logic: Expr = { // and/or/xor have the same precedence in netlogo - this is not a mistake
     <a:Logic> "and" <b:CmpEq> => Expr::And { a: Box::new(a), b: Box::new(b) },
     <a:Logic> "or" <b:CmpEq> => Expr::Or { a: Box::new(a), b: Box::new(b) },
     <a:Logic> "xor" <b:CmpEq> => Expr::Xor { a: Box::new(a), b: Box::new(b) },
