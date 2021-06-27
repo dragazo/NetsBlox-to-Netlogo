@@ -1,0 +1,32 @@
+<room name="{project_name}" app="NetsBlox 1.27.2, http://netsblox.org">
+    <role name="myRole">
+        <media name="myRole" app="NetsBlox 1.27.2, http://netsblox.org" version="1.27.2"></media>
+        <project name="myRole" app="NetsBlox 1.27.2, http://netsblox.org" version="1.27.2">
+            <stage name="Stage" width="480" height="360" costume="0" color="255,255,255,1" tempo="60" threadsafe="false" penlog="false" volume="100" pan="0" lines="round" ternary="false" hyperops="true" codify="false" inheritance="false" sublistIDs="false" scheduled="false" id="1">
+                <variables>
+                
+                </variables>
+                <blocks>
+
+                </blocks>
+                <scripts>
+                
+                </scripts>
+                <sprites>
+{breed_sprites}
+                </sprites>
+            </stage>
+            <hidden>
+
+            </hidden>
+            <variables>
+            
+            </variables>
+            <blocks>
+<block-definition s="get %&apos;name&apos; from %&apos;sprite&apos;" type="reporter" category="variables"><inputs><input type="%txt"><options>{all_breed_vars}</options></input><input type="%obj"></input></inputs><script><block s="doReport"><block s="evaluate"><block s="reportJSFunction"><list><l>sprite</l><l>name</l></list><l>return sprite.variables.vars[name].value;</l></block><list><block var="sprite"/><block var="name"/></list></block></block></script></block-definition>
+<block-definition s="set %&apos;name&apos; in %&apos;sprite&apos; to %&apos;value&apos;" type="command" category="variables"><inputs><input type="%txt"><options>{all_breed_vars}</options></input><input type="%obj"></input><input type="%s"></input></inputs><script><block s="doRun"><block s="reportJSFunction"><list><l>sprite</l><l>name</l><l>value</l></list><l>sprite.variables.vars[name].value = value;</l></block><list><block var="sprite"/><block var="name"/><block var="value"/></list></block></script></block-definition>
+{custom_blocks}
+            </blocks>
+        </project>
+    </role>
+</room>

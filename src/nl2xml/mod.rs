@@ -1,12 +1,15 @@
 mod ast;
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, BTreeMap, HashSet};
 use linked_hash_map::LinkedHashMap;
 
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::fmt::Write;
+use std::f32::consts as f32c;
+use std::f64::consts as f64c;
 
+use crate::util::*;
 use ast::*;
 pub use ast::{Ident, Span};
 
@@ -31,9 +34,9 @@ lazy_static! {
 fn get_func_def_name(func: &Function) -> String {
     let mut res = func.name.id.clone();
     for param in func.params.iter() {
-        write!(res, " %&apos;{}&apos;", param.id).unwrap();
+        write!(res, " %'{}'", param.id).unwrap();
     }
-    res
+    escape_xml(&res).into_owned()
 }
 fn get_func_name(func: &Function) -> String {
     let mut res = String::with_capacity(func.name.id.len() + 3 * func.params.len());
@@ -41,7 +44,7 @@ fn get_func_name(func: &Function) -> String {
     for _ in 0..func.params.len() {
         res += " %s";
     }
-    res
+    escape_xml(&res).into_owned()
 }
 
 #[derive(Debug)]
@@ -69,7 +72,7 @@ impl<'a> From<ParseError<usize, Token<'a>, &'a str>> for Error<'a> {
 }
 
 #[derive(Default)]
-struct EntityInfo<'a> { props: LinkedHashMap<&'a str, &'a Ident> }
+struct EntityInfo<'a> { props: BTreeMap<&'a str, &'a Ident> }
 
 struct GlobalSymbol<'a> { ident: &'a Ident }
 struct BreedSymbol<'a> { ident: &'a Ident, is_plural: bool, info: Rc<RefCell<EntityInfo<'a>>> }
@@ -170,7 +173,7 @@ impl<'a> Program<'a> {
                 x @ ("true" | "false") => format!(r#"<block s="reportBoolean"><l><bool>{}</bool></l></block>"#, x),
                 _ => {
                     self.ensure_var_defined(&*scopes, ident)?;
-                    format!(r#"<block var="{}"/>"#, ident.id)
+                    format!(r#"<block var="{}"/>"#, escape_xml(&ident.id))
                 }
             }
         })
@@ -213,7 +216,7 @@ impl<'a> Program<'a> {
                 }
                 Stmt::Assign(assign) => {
                     self.ensure_var_defined(scopes, &assign.name)?;
-                    write!(script, r#"<block s="doSetVar"><l>{}</l>{}</block>"#, assign.name.id, self.generate_expr_script(scopes, &assign.value)?).unwrap();
+                    write!(script, r#"<block s="doSetVar"><l>{}</l>{}</block>"#, escape_xml(&assign.name.id), self.generate_expr_script(scopes, &assign.value)?).unwrap();
                 }
                 x => panic!("unimplemented stmt: {:?}", x),
             }
@@ -249,7 +252,7 @@ impl<'a> Program<'a> {
         }
         // process all the own drectives we stored
         for own in owns {
-            fn add_props<'a>(target: &mut LinkedHashMap<&'a str, &'a Ident>, props: &'a [Ident]) {
+            fn add_props<'a>(target: &mut BTreeMap<&'a str, &'a Ident>, props: &'a [Ident]) {
                 for prop in props {
                     target.insert(&prop.id, prop);
                 }
@@ -278,38 +281,69 @@ impl<'a> Program<'a> {
     }
 }
 
+fn parse_breed_sprite<'b>(breed_sprites: &mut String, breed: &BreedSymbol, index: (usize, usize)) -> Result<(), Error<'b>> {
+    assert!(breed.is_plural);
+    let ang = 2.0 * f64c::PI * (index.0 as f64 / index.1 as f64);
+    let radius = if index.1 >= 2 { 100.0 } else { 0.0 };
+    let color = HSV::new(ang as f32 * 180.0 / f32c::PI, 0.5, 0.9).to_rgb().to_inner();
+
+    write!(breed_sprites, r#"<sprite name="{name}" x="{x}" y="{y}" heading="{heading}" color="{color}"  pen="middle"><blocks></blocks><variables>"#,
+        name = escape_xml(&breed.ident.id),
+        x = ang.sin() * radius,
+        y = ang.cos() * radius,
+        heading = ang * 180.0 / f64c::PI,
+        color = Punctuated(&[color.0, color.1, color.2], ",")).unwrap();
+    for var in breed.info.borrow().props.keys() {
+        write!(breed_sprites, r#"<variable name="{}"><l>0</l></variable>"#, escape_xml(var)).unwrap();
+    }
+    write!(breed_sprites, r#"</variables><scripts></scripts></sprite>"#).unwrap();
+
+    Ok(())
+}
+fn parse_function<'a, 'b>(custom_blocks: &mut String, program: &Program<'a>, scopes: &mut Vec<LinkedHashMap<&'a str, &'a Ident>>, func: &'a Function) -> Result<(), Error<'b>> {
+    assert!(scopes.is_empty());
+    scopes.push(Default::default()); // add a new scope for the function parameters
+
+    write!(custom_blocks, r#"<block-definition s="{}" type="{}" category="custom"><inputs>{}</inputs>"#,
+        get_func_def_name(func), if func.reports { "reporter" } else { "command" },
+        r#"<input type="%s"></input>"#.repeat(func.params.len())).unwrap();
+
+    for param in func.params.iter() {
+        program.validate_define_lexical(param, &scopes)?;
+        assert!(scopes.last_mut().unwrap().insert(&param.id, param).is_none());
+    }
+    let script = program.generate_script(scopes, &func.stmts, &func)?;
+    if !script.is_empty() { // if we generate an empty <script> tag it makes it uneditable in NetsBlox
+        write!(custom_blocks, "<script>{}</script>", script).unwrap();
+    }
+
+    write!(custom_blocks, "</block-definition>").unwrap();
+
+    scopes.pop(); // remove the scope we added
+    Ok(())
+}
 pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>> {
     let items = ast::parse(input)?;
     let program = Program::init_global(&items)?;
     
     let mut custom_blocks = String::new();
     let mut scopes = Vec::with_capacity(16);
-
     for func in program.funcs.values() {
-        assert!(scopes.is_empty());
-        scopes.push(Default::default()); // add a new scope for the function parameters
+        parse_function(&mut custom_blocks, &program, &mut scopes, func)?;
+    }
 
-        write!(custom_blocks, r#"<block-definition s="{}" type="{}" category="custom"><inputs>{}</inputs>"#,
-            get_func_def_name(func), if func.reports { "reporter" } else { "command" },
-            r#"<input type="%s"></input>"#.repeat(func.params.len())).unwrap();
-
-        for param in func.params.iter() {
-            program.validate_define_lexical(param, &scopes)?;
-            assert!(scopes.last_mut().unwrap().insert(&param.id, param).is_none());
-        }
-        let script = program.generate_script(&mut scopes, &func.stmts, &func)?;
-        if !script.is_empty() { // if we generate an empty <script> tag it makes it uneditable in NetsBlox
-            write!(custom_blocks, "<script>{}</script>", script).unwrap();
-        }
-
-        write!(custom_blocks, "</block-definition>").unwrap();
-
-        scopes.pop(); // remove the scope we added
+    let mut breed_sprites = String::new();
+    let mut all_breed_vars: BTreeSet<&str> = Default::default();
+    for (i, breed) in program.breeds.values().filter(|s| s.is_plural).enumerate() {
+        all_breed_vars.extend(breed.info.borrow().props.keys()); // accumulate breed vars (sorted order)
+        parse_breed_sprite(&mut breed_sprites, breed, (i, program.breeds.len() / 2))?;
     }
 
     Ok(format!(include_str!("template.xml"),
         project_name = project_name,
         custom_blocks = custom_blocks,
+        breed_sprites = breed_sprites,
+        all_breed_vars = escape_xml(&Punctuated(&all_breed_vars, "\r").to_string()),
     ))
 }
 
