@@ -218,6 +218,10 @@ impl<'a> Program<'a> {
                     self.ensure_var_defined(scopes, &assign.name)?;
                     write!(script, r#"<block s="doSetVar"><l>{}</l>{}</block>"#, escape_xml(&assign.name.id), self.generate_expr_script(scopes, &assign.value)?).unwrap();
                 }
+                Stmt::Repeat(repeat) => {
+                    write!(script, r#"<block s="doRepeat">{}<script>{}</script></block>"#,
+                        self.generate_expr_script(scopes, &repeat.count)?, self.generate_script(scopes, &repeat.stmts, func)?).unwrap();
+                }
                 x => panic!("unimplemented stmt: {:?}", x),
             }
         }
