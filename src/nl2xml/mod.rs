@@ -8,6 +8,7 @@ use std::rc::Rc;
 use std::fmt::Write;
 use std::f32::consts as f32c;
 use std::f64::consts as f64c;
+use std::iter;
 
 use crate::util::*;
 use ast::*;
@@ -18,12 +19,23 @@ use lalrpop_util::{ParseError, lexer::Token};
 use xml::escape::escape_str_attribute as escape_xml;
 
 lazy_static! {
-    static ref BUILTIN_NAMES: HashSet<&'static str> = {
-        let mut s = HashSet::new();
-        for line in include_str!("builtins.txt").lines() {
+    static ref GLOBAL_SCOPE: Vec<Ident> = {
+        let mut s = vec![];
+        for line in include_str!("globals.txt").lines() {
             for name in line.split_whitespace() {
                 if name.starts_with("#") { break } // comment
-                assert_eq!(name, name.to_lowercase());
+                debug_assert_eq!(name, name.to_lowercase());
+                s.push(Ident { id: name.into(), raw_span: Span(0, 0) }); // builtins have empty span at zero
+            }
+        }
+        s
+    };
+    static ref RESERVED_WORDS: HashSet<&'static str> = {
+        let mut s = HashSet::new();
+        for line in include_str!("reserved.txt").lines() {
+            for name in line.split_whitespace() {
+                if name.starts_with("#") { break } // comment
+                debug_assert_eq!(name, name.to_lowercase());
                 s.insert(name);
             }
         }
@@ -36,27 +48,26 @@ lazy_static! {
             if let Some(a) = items.next() {
                 if a.starts_with("#") { continue }
                 let b = items.next().unwrap();
-                assert!(!b.starts_with("#"));
+                debug_assert!(!b.starts_with("#"));
                 let c = items.next();
-                assert!(c.is_none() || c.unwrap().starts_with("#"));
-                assert!(s.insert(a, b).is_none());
+                debug_assert!(c.is_none() || c.unwrap().starts_with("#"));
+                debug_assert_eq!(s.insert(a, b), None);
             }
         }
         s
     };
-    static ref GLOBAL_SCOPE: Vec<Ident> = {
-        vec![
-            Ident { id: "ticks".into(), raw_span: Span(0, 0) },
-        ]
-    };
 }
 
-fn get_func_def_name(func: &Function) -> String {
+fn get_func_def_name<'b>(func: &Function) -> Result<String, Error<'b>> {
+    if let Some(bad) = iter::once(&func.name).chain(&func.params).find(|s| s.id.contains('\'')) {
+        return Err(Error::FuncHeaderHadApos { func: func.name.clone(), name: bad.clone() });
+    }
+
     let mut res = func.name.id.clone();
     for param in func.params.iter() {
         write!(res, " %'{}'", param.id).unwrap();
     }
-    escape_xml(&res).into_owned()
+    Ok(escape_xml(&res).into_owned())
 }
 fn get_func_name(func: &Function) -> String {
     let mut res = String::with_capacity(func.name.id.len() + 3 * func.params.len());
@@ -70,6 +81,7 @@ fn get_func_name(func: &Function) -> String {
 #[derive(Debug)]
 pub enum Error<'a> {
     Parse(ParseError<usize, Token<'a>, &'a str>),
+    FuncHeaderHadApos { func: Ident, name: Ident },
 
     Redefine { name: Ident, previous: Ident },
     RedefineBuiltin { name: Ident },
@@ -114,7 +126,7 @@ impl<'a> Program<'a> {
         if let Some(prev) = prev {
             return Err(Error::Redefine { name: ident.clone(), previous: prev.clone() });
         }
-        if BUILTIN_NAMES.contains(ident.id.as_str()) {
+        if RESERVED_WORDS.contains(ident.id.as_str()) {
             return Err(Error::RedefineBuiltin { name: ident.clone() });
         }
         Ok(())
@@ -360,7 +372,7 @@ fn parse_function<'a, 'b>(custom_blocks: &mut String, program: &Program<'a>, sco
     scopes.push(Default::default()); // add a new scope for the function parameters
 
     write!(custom_blocks, r#"<block-definition s="{}" type="{}" category="custom"><inputs>{}</inputs>"#,
-        get_func_def_name(func), if func.reports { "reporter" } else { "command" },
+        get_func_def_name(func)?, if func.reports { "reporter" } else { "command" },
         r#"<input type="%s"></input>"#.repeat(func.params.len())).unwrap();
 
     for param in func.params.iter() {
