@@ -1,6 +1,6 @@
 mod ast;
 
-use std::collections::{BTreeSet, BTreeMap, HashSet};
+use std::collections::{BTreeSet, BTreeMap, HashSet, HashMap};
 use linked_hash_map::LinkedHashMap;
 
 use std::cell::RefCell;
@@ -28,6 +28,26 @@ lazy_static! {
             }
         }
         s
+    };
+    static ref SUGGESTIONS: HashMap<&'static str, &'static str> = {
+        let mut s = HashMap::new();
+        for line in include_str!("suggestions.txt").lines() {
+            let mut items = line.split_whitespace();
+            if let Some(a) = items.next() {
+                if a.starts_with("#") { continue }
+                let b = items.next().unwrap();
+                assert!(!b.starts_with("#"));
+                let c = items.next();
+                assert!(c.is_none() || c.unwrap().starts_with("#"));
+                assert!(s.insert(a, b).is_none());
+            }
+        }
+        s
+    };
+    static ref GLOBAL_SCOPE: Vec<Ident> = {
+        vec![
+            Ident { id: "ticks".into(), raw_span: Span(0, 0) },
+        ]
     };
 }
 
@@ -57,11 +77,12 @@ pub enum Error<'a> {
     ExpectedPlural { name: Ident },
     BreedNotDefined { name: Ident },
     VariableNoTDefined { name: Ident },
-    FunctionNotDefined { name: Ident },
+    FunctionNotDefined { name: Ident, suggested: Option<&'static str> },
 
-    FunctionArgCount { func: Ident, invoke_span: Span, got: usize, expected: usize },
-    NonReporterInExpr { func: Ident, invoke_span: Span },
-    
+    FunctionArgCount { func: Ident, invoke_span: Span, got: usize, expected: usize, is_builtin: bool },
+    NonReporterInExpr { func: Ident, invoke_span: Span, is_builtin: bool },
+    ReporterValueDiscarded { func: Ident, invoke_span: Span, is_builtin: bool },
+
     ReportInNonReporter { func: Ident, report_span: Span },
     UnreachableCode { func: Ident, unreachable_span: Span },
 }
@@ -113,75 +134,97 @@ impl<'a> Program<'a> {
         if self.globals.contains_key(ident.id.as_str()) { return Ok(()) }
         Err(Error::VariableNoTDefined { name: ident.clone() })
     }
-    fn format_func_call<'b>(&self, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, func: &Function, args: &[Expr], invoke_span: Span) -> Result<String, Error<'b>> {
-        if func.params.len() != args.len() {
-            return Err(Error::FunctionArgCount { func: func.name.clone(), invoke_span, got: args.len(), expected: func.params.len() });
+    fn format_func_call<'b>(&self, script: &mut String, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, call: &FnCall, in_expr: bool) -> Result<(), Error<'b>> {
+        fn check_usage<'b>(call: &FnCall, func: Option<&Function>, reports: bool, in_expr: bool, expected_args: Option<usize>) -> Result<(), Error<'b>> {
+            debug_assert!(func.is_none() || func.unwrap().reports == reports);
+            debug_assert!(func.is_none() || expected_args.is_none() || func.unwrap().params.len() == expected_args.unwrap());
+            let target = func.map(|f| &f.name).unwrap_or(&call.name);
+            let is_builtin = func.is_none();
+
+            match (reports, in_expr) {
+                (true, true) | (false, false) => (),
+                (true, false) => return Err(Error::ReporterValueDiscarded { func: target.clone(), invoke_span: call.span(), is_builtin }),
+                (false, true) => return Err(Error::NonReporterInExpr { func: target.clone(), invoke_span: call.span(), is_builtin }),
+            }
+            if let Some(expected) = expected_args {
+                if call.args.len() != expected { return Err(Error::FunctionArgCount { func: target.clone(), invoke_span: call.span(), got: call.args.len(), expected, is_builtin }) }
+            }
+            Ok(())
         }
-
-        let mut res = format!(r#"<custom-block s="{}">"#, get_func_name(func));
-        for arg in args.iter() {
-            res += &self.generate_expr_script(scopes, arg)?;
-        }
-        res += "</custom-block>";
-        Ok(res)
-    }
-    fn generate_expr_script<'b>(&self, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, expr: &Expr) -> Result<String, Error<'b>> {
-        Ok(match expr {
-            Expr::Choice { condition, a, b, .. } => format!(r#"<block s="reportIfElse">{}{}{}</block>"#, self.generate_expr_script(scopes, condition)?, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
-
-            Expr::And { a, b, .. } => format!(r#"<block s="reportAnd">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
-            Expr::Or { a, b, .. } => format!(r#"<block s="reportOr">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
-            Expr::Xor { a, b, .. } | Expr::Neq { a, b, .. } => format!(r#"<block s="reportNot"><block s="reportEquals">{}{}</block></block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
-            Expr::Equ { a, b, .. } => format!(r#"<block s="reportEquals">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
-            
-            Expr::Less { a, b, .. } => format!(r#"<block s="reportLessThan">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
-            Expr::LessEq { a, b, .. } => format!(r#"<block s="reportNot"><block s="reportGreaterThan">{}{}</block></block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
-            Expr::Great { a, b, .. } => format!(r#"<block s="reportGreaterThan">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
-            Expr::GreatEq { a, b, .. } => format!(r#"<block s="reportNot"><block s="reportLessThan">{}{}</block></block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
-
-            Expr::Add { a, b, .. } => format!(r#"<block s="reportSum">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
-            Expr::Sub { a, b, .. } => format!(r#"<block s="reportDifference">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
-            
-            Expr::Mul { a, b, .. } => format!(r#"<block s="reportProduct">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
-            Expr::Div { a, b, .. } => format!(r#"<block s="reportQuotient">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
-            Expr::Mod { a, b, .. } => format!(r#"<block s="reportModulus">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
-            
-            Expr::Pow { a, b, .. } => format!(r#"<block s="reportPower">{}{}</block>"#, self.generate_expr_script(scopes, a)?, self.generate_expr_script(scopes, b)?),
-            
-            Expr::Not { val, .. } => format!(r#"<block s="reportNot">{}</block>"#, self.generate_expr_script(scopes, val)?),
-            Expr::Neg { val, .. } => format!(r#"<block s="reportMonadic"><l><option>neg</option></l>{}</block>"#, self.generate_expr_script(scopes, val)?),
-
-            Expr::FnCall(call) => match self.funcs.get(call.name.id.as_str()) {
-                None => return Err(Error::FunctionNotDefined { name: call.name.clone() }),
+        match call.name.id.as_str() {
+            "reset-ticks" => {
+                check_usage(call, None, false, in_expr, Some(0))?;
+                *script += r#"<block s="doSetVar"><l>ticks</l><l>0</l></block>"#;
+            }
+            "tick" => {
+                check_usage(call, None, false, in_expr, Some(0))?;
+                *script += r#"<block s="doChangeVar"><l>ticks</l><l>1</l></block>"#;
+            }
+            x => match self.funcs.get(x) {
+                None => return Err(Error::FunctionNotDefined { name: call.name.clone(), suggested: SUGGESTIONS.get(x).copied() }),
                 Some(func) => {
-                    if !func.reports { return Err(Error::NonReporterInExpr { func: func.name.clone(), invoke_span: call.span() }) }
-                    self.format_func_call(scopes, func, &call.args, call.span())?
+                    check_usage(call, Some(func), func.reports, in_expr, Some(func.params.len()))?;
+
+                    write!(script, r#"<custom-block s="{}">"#, get_func_name(func)).unwrap();
+                    for arg in call.args.iter() {
+                        self.generate_expr_script(script, scopes, arg)?;
+                    }
+                    *script += "</custom-block>";
                 }
             }
+        }
+        Ok(())
+    }
+    fn generate_expr_script<'b>(&self, script: &mut String, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, expr: &Expr) -> Result<(), Error<'b>> {
+        match expr {
+            Expr::Choice { condition, a, b, .. } => { *script += r#"<block s="reportIfElse">"#; self.generate_expr_script(script, scopes, condition)?; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>" }
 
-            Expr::Value(Value::Number(num)) => format!("<l>{}</l>", escape_xml(&num.value)),
-            Expr::Value(Value::Text(text)) => format!("<l>{}</l>", escape_xml(&text.content)),
+            Expr::And { a, b, .. } => { *script += r#"<block s="reportAnd">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
+            Expr::Or { a, b, .. } => { *script += r#"<block s="reportOr">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
+            Expr::Xor { a, b, .. } | Expr::Neq { a, b, .. } => { *script += r#"<block s="reportNot"><block s="reportEquals">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block></block>"; }
+            Expr::Equ { a, b, .. } => { *script += r#"<block s="reportEquals">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
+            
+            Expr::Less { a, b, .. } => { *script += r#"<block s="reportLessThan">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
+            Expr::LessEq { a, b, .. } => { *script += r#"<block s="reportNot"><block s="reportGreaterThan">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block></block>"; }
+            Expr::Great { a, b, .. } => { *script += r#"<block s="reportGreaterThan">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
+            Expr::GreatEq { a, b, .. } => { *script += r#"<block s="reportNot"><block s="reportLessThan">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block></block>"; }
+
+            Expr::Add { a, b, .. } => { *script += r#"<block s="reportSum">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
+            Expr::Sub { a, b, .. } => { *script += r#"<block s="reportDifference">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
+            
+            Expr::Mul { a, b, .. } => { *script += r#"<block s="reportProduct">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
+            Expr::Div { a, b, .. } => { *script += r#"<block s="reportQuotient">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
+            Expr::Mod { a, b, .. } => { *script += r#"<block s="reportModulus">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
+            
+            Expr::Pow { a, b, .. } => { *script += r#"<block s="reportPower">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
+            
+            Expr::Not { val, .. } => { *script += r#"<block s="reportNot">"#; self.generate_expr_script(script, scopes, val)?; *script += "</block>"; }
+            Expr::Neg { val, .. } => { *script += r#"<block s="reportMonadic"><l><option>neg</option></l>"#; self.generate_expr_script(script, scopes, val)?; *script += "</block>"; }
+
+            Expr::FnCall(call) => self.format_func_call(script, scopes, call, true)?,
+
+            Expr::Value(Value::Number(num)) => write!(script, "<l>{}</l>", escape_xml(&num.value)).unwrap(),
+            Expr::Value(Value::Text(text)) => write!(script, "<l>{}</l>", escape_xml(&text.content)).unwrap(),
             Expr::Value(Value::List(list)) => {
-                let mut res = r#"<block s="reportNewList"><list>"#.to_string();
+                *script += r#"<block s="reportNewList"><list>"#;
                 for value in &list.values {
-                    res += &self.generate_expr_script(scopes, value)?;
+                    self.generate_expr_script(script, scopes, value)?;
                 }
-                res += "</list></block>";
-                res
+                *script += "</list></block>";
             }
             Expr::Value(Value::Ident(ident)) => match ident.id.as_str() {
-                x @ ("true" | "false") => format!(r#"<block s="reportBoolean"><l><bool>{}</bool></l></block>"#, x),
+                x @ ("true" | "false") => write!(script, r#"<block s="reportBoolean"><l><bool>{}</bool></l></block>"#, x).unwrap(),
                 _ => {
                     self.ensure_var_defined(&*scopes, ident)?;
-                    format!(r#"<block var="{}"/>"#, escape_xml(&ident.id))
+                    write!(script, r#"<block var="{}"/>"#, escape_xml(&ident.id)).unwrap();
                 }
             }
-        })
+        }
+        Ok(())
     }
-    fn generate_script<'b>(&self, scopes: &mut Vec<LinkedHashMap<&'a str, &'a Ident>>, stmts: &'a [Stmt], func: &Function) -> Result<String, Error<'b>> {
+    fn generate_script<'b>(&self, script: &mut String, scopes: &mut Vec<LinkedHashMap<&'a str, &'a Ident>>, stmts: &'a [Stmt], func: &Function) -> Result<(), Error<'b>> {
         scopes.push(Default::default()); // generate a new scope for this script
 
-        let mut script = String::new();
         let mut has_terminated = false;
 
         for stmt in stmts {
@@ -189,45 +232,53 @@ impl<'a> Program<'a> {
             match stmt {
                 Stmt::Report(report) => {
                     if !func.reports { return Err(Error::ReportInNonReporter { func: func.name.clone(), report_span: report.span() }) }
-                    write!(script, r#"<block s="doReport">{}</block>"#, self.generate_expr_script(scopes, &report.value)?).unwrap();
+
+                    *script += r#"<block s="doReport">"#;
+                    self.generate_expr_script(script, scopes, &report.value)?;
+                    *script += "</block>";
+
                     has_terminated = true;
                 }
-                Stmt::IfElse(ifelse) => match &ifelse.otherwise {
-                    None => write!(script, r#"<block s="doIf">{}<script>{}</script></block>"#,
-                        self.generate_expr_script(scopes, &ifelse.condition)?, self.generate_script(scopes, &ifelse.then, func)?).unwrap(),
-                    Some(otherwise) => write!(script, r#"<block s="doIfElse">{}<script>{}</script><script>{}</script></block>"#,
-                        self.generate_expr_script(scopes, &ifelse.condition)?, self.generate_script(scopes, &ifelse.then, func)?, self.generate_script(scopes, otherwise, func)?).unwrap(),
-                }
-                Stmt::FnCall(call) => match self.funcs.get(call.name.id.as_str()) {
-                    None => return Err(Error::FunctionNotDefined { name: call.name.clone() }),
-                    Some(func) => match (func.reports, self.format_func_call(scopes, func, &call.args, call.span())?) {
-                        (true, x) => write!(script, r#"<block s="doRun"><block s="reifyReporter"><autolambda>{}</autolambda></block></block>"#, x).unwrap(),
-                        (false, x) => script += &x,
+                Stmt::IfElse(ifelse) => {
+                    *script += if ifelse.otherwise.is_none() { r#"<block s="doIf">"# } else { r#"<block s="doIfElse">"# };
+                    self.generate_expr_script(script, scopes, &ifelse.condition)?;
+                    *script += "<script>";
+                    self.generate_script(script, scopes, &ifelse.then, func)?;
+                    if let Some(otherwise) = &ifelse.otherwise {
+                        *script += "</script><script>";
+                        self.generate_script(script, scopes, otherwise, func)?;
                     }
+                    *script += "</script></block>";
                 }
+                Stmt::FnCall(call) => self.format_func_call(script, scopes, call, false)?,
                 Stmt::VarDecl(vardecl) => {
-                    let value_script = self.generate_expr_script(scopes, &vardecl.value)?; // must evaluate before defining the symbol
+                    self.validate_define_lexical(&vardecl.name, scopes)?; // check if the name is valid before we do anything else
+                    
+                    write!(script, r#"<block s="doDeclareVariables"><list><l>{name}</l></list></block><block s="doSetVar"><l>{name}</l>"#, name = escape_xml(&vardecl.name.id)).unwrap();
+                    self.generate_expr_script(script, scopes, &vardecl.value)?;
+                    *script += "</block>";
 
-                    self.validate_define_lexical(&vardecl.name, scopes)?;
-                    scopes.last_mut().unwrap().insert(&vardecl.name.id, &vardecl.name);
-
-                    write!(script, r#"<block s="doDeclareVariables"><list><l>{name}</l></list></block><block s="doSetVar"><l>{name}</l>{value}</block>"#,
-                        name = escape_xml(&vardecl.name.id), value = value_script).unwrap();
+                    scopes.last_mut().unwrap().insert(&vardecl.name.id, &vardecl.name); // add the symbol after evaluating to prevent self-dependency
                 }
                 Stmt::Assign(assign) => {
                     self.ensure_var_defined(scopes, &assign.name)?;
-                    write!(script, r#"<block s="doSetVar"><l>{}</l>{}</block>"#, escape_xml(&assign.name.id), self.generate_expr_script(scopes, &assign.value)?).unwrap();
+                    write!(script, r#"<block s="doSetVar"><l>{}</l>"#, escape_xml(&assign.name.id)).unwrap();
+                    self.generate_expr_script(script, scopes, &assign.value)?;
+                    *script += "</block>";
                 }
                 Stmt::Repeat(repeat) => {
-                    write!(script, r#"<block s="doRepeat">{}<script>{}</script></block>"#,
-                        self.generate_expr_script(scopes, &repeat.count)?, self.generate_script(scopes, &repeat.stmts, func)?).unwrap();
+                    *script += r#"<block s="doRepeat">"#;
+                    self.generate_expr_script(script, scopes, &repeat.count)?;
+                    *script += "<script>";
+                    self.generate_script(script, scopes, &repeat.stmts, func)?;
+                    *script += "</script></block>";
                 }
                 x => panic!("unimplemented stmt: {:?}", x),
             }
         }
 
         scopes.pop(); // remove the scope we created
-        Ok(script)
+        Ok(())
     }
     fn init_global<'b>(items: &[Item]) -> Result<Program, Error<'b>> {
         let mut program = Program::default();
@@ -305,7 +356,7 @@ fn parse_breed_sprite<'b>(breed_sprites: &mut String, breed: &BreedSymbol, index
     Ok(())
 }
 fn parse_function<'a, 'b>(custom_blocks: &mut String, program: &Program<'a>, scopes: &mut Vec<LinkedHashMap<&'a str, &'a Ident>>, func: &'a Function) -> Result<(), Error<'b>> {
-    assert!(scopes.is_empty());
+    assert_eq!(scopes.len(), 1); // should just have the global scope
     scopes.push(Default::default()); // add a new scope for the function parameters
 
     write!(custom_blocks, r#"<block-definition s="{}" type="{}" category="custom"><inputs>{}</inputs>"#,
@@ -316,8 +367,9 @@ fn parse_function<'a, 'b>(custom_blocks: &mut String, program: &Program<'a>, sco
         program.validate_define_lexical(param, &scopes)?;
         assert!(scopes.last_mut().unwrap().insert(&param.id, param).is_none());
     }
-    let script = program.generate_script(scopes, &func.stmts, &func)?;
-    if !script.is_empty() { // if we generate an empty <script> tag it makes it uneditable in NetsBlox
+    let mut script = String::new();
+    program.generate_script(&mut script, scopes, &func.stmts, &func)?;
+    if !script.is_empty() { // if we generate an empty <script> tag here, it makes the block uneditable in NetsBlox
         write!(custom_blocks, "<script>{}</script>", script).unwrap();
     }
 
@@ -332,6 +384,8 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
     
     let mut custom_blocks = String::new();
     let mut scopes = Vec::with_capacity(16);
+    scopes.push(GLOBAL_SCOPE.iter().map(|s| (s.id.as_str(), s)).collect());
+
     for func in program.funcs.values() {
         parse_function(&mut custom_blocks, &program, &mut scopes, func)?;
     }
