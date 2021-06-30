@@ -187,6 +187,18 @@ impl<'a> Program<'a> {
                 check_usage(call, None, false, in_expr, Some(0))?;
                 *script += r#"<block s="doChangeVar"><l>ticks</l><l>1</l></block>"#;
             }
+            "forward" | "fd" => {
+                check_usage(call, None, false, in_expr, Some(1))?;
+                *script += r#"<custom-block s="move %n steps">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</custom-block>";
+            }
+            x @ ("right" | "rt" | "left" | "lt") => {
+                check_usage(call, None, false, in_expr, Some(1))?;
+                *script += if x.starts_with("r") { r#"<block s="turn">"# } else { r#"<block s="turnLeft">"# };
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</block>";
+            }
             x => match self.funcs.get(x) {
                 None => return Err(Error::FunctionNotDefined { name: call.name.clone(), suggested: SUGGESTIONS.get(x).copied() }),
                 Some(func) => {
