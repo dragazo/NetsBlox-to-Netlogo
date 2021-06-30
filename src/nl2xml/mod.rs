@@ -319,7 +319,14 @@ impl<'a> Program<'a> {
                     self.generate_expr_script(script, scopes, &create.count)?;
                     write!(script, r#"<l>{}</l></custom-block><block s="reifyScript"><script>"#, escape_xml(&create.breed_plural.id)).unwrap();
                     self.generate_script(script, scopes, &create.stmts, func)?;
-                    *script += r#"</script><list></list></block></custom-block>"#;
+                    *script += "</script><list></list></block></custom-block>";
+                }
+                Stmt::Ask(ask) => {
+                    *script += r#"<custom-block s="tell %l to %cmdRing">"#;
+                    self.generate_expr_script(script, scopes, &ask.agents)?;
+                    *script += r#"<block s="reifyScript"><script>"#;
+                    self.generate_script(script, scopes, &ask.stmts, func)?;
+                    *script += "</script><list></list></block></custom-block>";
                 }
             }
         }

@@ -51,6 +51,7 @@ Stmt: Stmt = {
     Assign => Stmt::Assign(<>),
     Repeat => Stmt::Repeat(<>),
     Create => Stmt::Create(<>),
+    Ask => Stmt::Ask(<>),
 };
 
 Report: Report = <l:@L> "report" <value:Expr> => Report { value, lspan: l };
@@ -64,6 +65,7 @@ Repeat: Repeat = <l:@L> "repeat" <count:Expr> "[" <stmts:Stmt*> "]" <r:@R> => Re
 Create: Create = <l:@L> <h:CreateHelper> <count:Expr> "[" <stmts:Stmt*> "]" <r:@R> => {
     Create { breed_plural: h.0, ordered: h.1, count, stmts, raw_span: Span(l, r) }
 };
+Ask: Ask = <l:@L> "ask" <agents:Expr> "[" <stmts:Stmt*> "]" <r:@R> => Ask { agents, stmts, raw_span: Span(l, r) };
 
 CreateHelper: (Ident, bool) = {
     <l:@L> <raw:"CREATE-ORDERED-IDENT"> => (Ident { id: raw[15..].to_lowercase(), raw_span: Span(l + 15, l + raw.len()) }, true),
