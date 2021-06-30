@@ -1,3 +1,4 @@
 # these are all the symbols that appear in the global scope
 # they should also be reserved words in builtins.txt
 ticks
+turtles

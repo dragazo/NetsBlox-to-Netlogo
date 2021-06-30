@@ -86,6 +86,7 @@ pub enum Error<'a> {
     Redefine { name: Ident, previous: Ident },
     RedefineBuiltin { name: Ident },
 
+    ExpectedSingular { name: Ident },
     ExpectedPlural { name: Ident },
     BreedNotDefined { name: Ident },
     VariableNoTDefined { name: Ident },
@@ -145,6 +146,20 @@ impl<'a> Program<'a> {
         }
         if self.globals.contains_key(ident.id.as_str()) { return Ok(()) }
         Err(Error::VariableNoTDefined { name: ident.clone() })
+    }
+    fn ensure_breed_defined<'b>(&self, ident: &Ident, should_be_plural: Option<bool>) -> Result<(), Error<'b>> {
+        let breed = match self.breeds.get(ident.id.as_str()) {
+            None => return Err(Error::BreedNotDefined { name: ident.clone() }),
+            Some(b) => b,
+        };
+        if let Some(should_be_plural) = should_be_plural {
+            match (breed.is_plural, should_be_plural) {
+                (true, true) | (false, false) => (),
+                (true, false) => return Err(Error::ExpectedSingular { name: ident.clone() }),
+                (false, true) => return Err(Error::ExpectedPlural { name: ident.clone() }),
+            }
+        }
+        Ok(())
     }
     fn format_func_call<'b>(&self, script: &mut String, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, call: &FnCall, in_expr: bool) -> Result<(), Error<'b>> {
         fn check_usage<'b>(call: &FnCall, func: Option<&Function>, reports: bool, in_expr: bool, expected_args: Option<usize>) -> Result<(), Error<'b>> {
@@ -285,7 +300,15 @@ impl<'a> Program<'a> {
                     self.generate_script(script, scopes, &repeat.stmts, func)?;
                     *script += "</script></block>";
                 }
-                x => panic!("unimplemented stmt: {:?}", x),
+                Stmt::Create(create) => {
+                    self.ensure_breed_defined(&create.breed_plural, Some(true))?;
+                    *script += r#"<custom-block s="tell %l to %cmdRing">"#;
+                    *script += if create.ordered { r#"<custom-block s="%n new %txt (ordered)">"# } else { r#"<custom-block s="%n new %txt">"# };
+                    self.generate_expr_script(script, scopes, &create.count)?;
+                    write!(script, r#"<l>{}</l></custom-block><block s="reifyScript"><script>"#, escape_xml(&create.breed_plural.id)).unwrap();
+                    self.generate_script(script, scopes, &create.stmts, func)?;
+                    *script += r#"</script><list></list></block></custom-block>"#;
+                }
             }
         }
 
@@ -354,8 +377,9 @@ fn parse_breed_sprite<'b>(breed_sprites: &mut String, breed: &BreedSymbol, index
     let radius = if index.1 >= 2 { 100.0 } else { 0.0 };
     let color = HSV::new(ang as f32 * 180.0 / f32c::PI, 0.5, 0.9).to_rgb().to_inner();
 
+    let escaped_name = escape_xml(&breed.ident.id);
     write!(breed_sprites, r#"<sprite name="{name}" x="{x}" y="{y}" heading="{heading}" color="{color}"  pen="middle"><blocks></blocks><variables>"#,
-        name = escape_xml(&breed.ident.id),
+        name = escaped_name,
         x = ang.sin() * radius,
         y = ang.cos() * radius,
         heading = ang * 180.0 / f64c::PI,
@@ -363,7 +387,7 @@ fn parse_breed_sprite<'b>(breed_sprites: &mut String, breed: &BreedSymbol, index
     for var in breed.info.borrow().props.keys() {
         write!(breed_sprites, r#"<variable name="{}"><l>0</l></variable>"#, escape_xml(var)).unwrap();
     }
-    write!(breed_sprites, r#"</variables><scripts></scripts></sprite>"#).unwrap();
+    write!(breed_sprites, r#"</variables><scripts><script x="20" y="20"><block s="receiveGo"></block><block s="doSetVar"><l>{}</l><block s="reportNewList"><list></list></block></block><block s="hide"></block></script></scripts></sprite>"#, escaped_name).unwrap();
 
     Ok(())
 }
@@ -396,7 +420,14 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
     
     let mut custom_blocks = String::new();
     let mut scopes = Vec::with_capacity(16);
-    scopes.push(GLOBAL_SCOPE.iter().map(|s| (s.id.as_str(), s)).collect());
+
+    let mut variables = String::new();
+    let mut root_scope: LinkedHashMap<&str, &Ident> = GLOBAL_SCOPE.iter().map(|s| (s.id.as_str(), s)).collect();
+    for breed in program.breeds.values().filter(|s| s.is_plural) {
+        assert!(root_scope.insert(breed.ident.id.as_str(), &breed.ident).is_none());
+        write!(variables, r#"<variable name="{}"><list struct="atomic"></list></variable>"#, breed.ident.id.as_str()).unwrap();
+    }
+    scopes.push(root_scope);
 
     for func in program.funcs.values() {
         parse_function(&mut custom_blocks, &program, &mut scopes, func)?;
@@ -404,7 +435,9 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
 
     let mut breed_sprites = String::new();
     let mut all_breed_vars: BTreeSet<&str> = Default::default();
+    let mut plural_breed_names: BTreeSet<&str> = Default::default();
     for (i, breed) in program.breeds.values().filter(|s| s.is_plural).enumerate() {
+        plural_breed_names.insert(breed.ident.id.as_str());
         all_breed_vars.extend(breed.info.borrow().props.keys()); // accumulate breed vars (sorted order)
         parse_breed_sprite(&mut breed_sprites, breed, (i, program.breeds.len() / 2))?;
     }
@@ -413,7 +446,9 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
         project_name = project_name,
         custom_blocks = custom_blocks,
         breed_sprites = breed_sprites,
+        variables = variables,
         all_breed_vars = escape_xml(&Punctuated(&all_breed_vars, "\r").to_string()),
+        plural_breed_names = escape_xml(&Punctuated(&plural_breed_names, "\r").to_string()),
     ))
 }
 
