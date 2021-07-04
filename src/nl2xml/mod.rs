@@ -98,6 +98,8 @@ pub enum Error<'a> {
 
     ReportInNonReporter { func: Ident, report_span: Span },
     UnreachableCode { func: Ident, unreachable_span: Span },
+
+    MissingRequiredFunc { name: &'static str, reports: bool, params: &'static [&'static str] },
 }
 impl<'a> From<ParseError<usize, Token<'a>, &'a str>> for Error<'a> {
     fn from(e: ParseError<usize, Token<'a>, &'a str>) -> Self {
@@ -186,6 +188,10 @@ impl<'a> Program<'a> {
             "tick" => {
                 check_usage(call, None, false, in_expr, Some(0))?;
                 *script += r#"<block s="doChangeVar"><l>ticks</l><l>1</l></block>"#;
+            }
+            "clear-turtles" => {
+                check_usage(call, None, false, in_expr, Some(0))?;
+                *script += r#"<custom-block s="delete all clones"></custom-block>"#;
             }
             "forward" | "fd" => {
                 check_usage(call, None, false, in_expr, Some(1))?;
@@ -397,7 +403,7 @@ fn parse_breed_sprite<'b>(breed_sprites: &mut String, breed: &BreedSymbol, index
     let color = HSV::new(ang as f32 * 180.0 / f32c::PI, 0.5, 0.9).to_rgb().to_inner();
 
     let escaped_name = escape_xml(&breed.ident.id);
-    write!(breed_sprites, r#"<sprite name="{name}" x="{x}" y="{y}" heading="{heading}" color="{color}"  pen="middle"><blocks></blocks><variables>"#,
+    write!(breed_sprites, r#"<sprite name="{name}" x="{x}" y="{y}" heading="{heading}" hidden="true" color="{color}"  pen="middle"><blocks></blocks><variables>"#,
         name = escaped_name,
         x = ang.sin() * radius,
         y = ang.cos() * radius,
@@ -406,7 +412,12 @@ fn parse_breed_sprite<'b>(breed_sprites: &mut String, breed: &BreedSymbol, index
     for var in breed.info.borrow().props.keys() {
         write!(breed_sprites, r#"<variable name="{}"><l>0</l></variable>"#, escape_xml(var)).unwrap();
     }
-    write!(breed_sprites, r#"</variables><scripts><script x="20" y="20"><block s="receiveGo"></block><block s="doSetVar"><l>{}</l><block s="reportNewList"><list></list></block></block><block s="hide"></block></script></scripts></sprite>"#, escaped_name).unwrap();
+
+    *breed_sprites += "</variables><scripts>";
+    
+    *breed_sprites += r#"<script x="20" y="20"><block s="receiveMessage"><l>delete</l></block><block s="removeClone"></block></script>"#;
+
+    *breed_sprites += "</scripts></sprite>";
 
     Ok(())
 }
@@ -433,10 +444,21 @@ fn parse_function<'a, 'b>(custom_blocks: &mut String, program: &Program<'a>, sco
     scopes.pop(); // remove the scope we added
     Ok(())
 }
+fn ensure_has_required_func<'b>(program: &Program, name: &'static str, reports: bool, params: &'static [&'static str]) -> Result<(), Error<'b>> {
+    if let Some(&func) = program.funcs.get(name) {
+        if func.reports == reports && func.params.len() == params.len() && func.params.iter().zip(params).all(|(a, &b)| a.id == b) {
+            return Ok(())
+        }
+    }
+    Err(Error::MissingRequiredFunc { name, reports, params })
+}
 pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>> {
     let items = ast::parse(input)?;
     let program = Program::init_global(&items)?;
     
+    ensure_has_required_func(&program, "setup", false, &[])?;
+    ensure_has_required_func(&program, "go", false, &[])?;
+
     let mut custom_blocks = String::new();
     let mut scopes = Vec::with_capacity(16);
 
