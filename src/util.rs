@@ -1,5 +1,9 @@
 use std::fmt::{self, Debug, Display};
 
+pub fn indent(code: &str) -> String {
+    code.lines().map(|s| format!("    {}", s)).collect::<Vec<_>>().join("\n")
+}
+
 pub struct Punctuated<'a, T: IntoIterator + Copy>(pub T, pub &'a str);
 impl<'a, T: IntoIterator + Copy> Debug for Punctuated<'a, T> where <T as IntoIterator>::Item: Debug {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

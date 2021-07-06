@@ -1,6 +1,6 @@
 mod ast;
 
-use std::collections::{BTreeSet, BTreeMap, HashSet, HashMap};
+use std::collections::{BTreeSet, BTreeMap, HashMap};
 use linked_hash_map::LinkedHashMap;
 
 use std::cell::RefCell;
@@ -10,6 +10,7 @@ use std::f32::consts as f32c;
 use std::f64::consts as f64c;
 use std::iter;
 
+use crate::common::*;
 use crate::util::*;
 use ast::*;
 pub use ast::{Ident, Span};
@@ -19,28 +20,7 @@ use lalrpop_util::{ParseError, lexer::Token};
 use xml::escape::escape_str_attribute as escape_xml;
 
 lazy_static! {
-    static ref GLOBAL_SCOPE: Vec<Ident> = {
-        let mut s = vec![];
-        for line in include_str!("globals.txt").lines() {
-            for name in line.split_whitespace() {
-                if name.starts_with("#") { break } // comment
-                debug_assert_eq!(name, name.to_lowercase());
-                s.push(Ident { id: name.into(), raw_span: Span(0, 0) }); // builtins have empty span at zero
-            }
-        }
-        s
-    };
-    static ref RESERVED_WORDS: HashSet<&'static str> = {
-        let mut s = HashSet::new();
-        for line in include_str!("reserved.txt").lines() {
-            for name in line.split_whitespace() {
-                if name.starts_with("#") { break } // comment
-                debug_assert_eq!(name, name.to_lowercase());
-                s.insert(name);
-            }
-        }
-        s
-    };
+    static ref GLOBAL_SCOPE_IDENTS: Vec<Ident> = GLOBAL_SCOPE.iter().map(|&s| Ident { id: s.into(), raw_span: Span(0, 0) }).collect();
     static ref SUGGESTIONS: HashMap<&'static str, &'static str> = {
         let mut s = HashMap::new();
         for line in include_str!("suggestions.txt").lines() {
@@ -226,8 +206,10 @@ impl<'a> Program<'a> {
 
             Expr::And { a, b, .. } => { *script += r#"<block s="reportAnd">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
             Expr::Or { a, b, .. } => { *script += r#"<block s="reportOr">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
-            Expr::Xor { a, b, .. } | Expr::Neq { a, b, .. } => { *script += r#"<block s="reportNot"><block s="reportEquals">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block></block>"; }
+            Expr::Xor { a, b, .. } => { *script += r#"<custom-block s="%b xor %b">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</custom-block>"; }
+
             Expr::Equ { a, b, .. } => { *script += r#"<block s="reportEquals">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
+            Expr::Neq { a, b, .. } => { *script += r#"<block s="reportNot"><block s="reportEquals">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block></block>"; }
             
             Expr::Less { a, b, .. } => { *script += r#"<block s="reportLessThan">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
             Expr::LessEq { a, b, .. } => { *script += r#"<block s="reportNot"><block s="reportGreaterThan">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block></block>"; }
@@ -463,10 +445,13 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
     let mut scopes = Vec::with_capacity(16);
 
     let mut variables = String::new();
-    let mut root_scope: LinkedHashMap<&str, &Ident> = GLOBAL_SCOPE.iter().map(|s| (s.id.as_str(), s)).collect();
+    let mut root_scope: LinkedHashMap<&str, &Ident> = GLOBAL_SCOPE_IDENTS.iter().map(|s| (s.id.as_str(), s)).collect();
     for breed in program.breeds.values().filter(|s| s.is_plural) {
         assert!(root_scope.insert(breed.ident.id.as_str(), &breed.ident).is_none());
         write!(variables, r#"<variable name="{}"><list struct="atomic"></list></variable>"#, breed.ident.id.as_str()).unwrap();
+    }
+    for global in program.globals.values() {
+        write!(variables, r#"<variable name="{}"><l>0</l></variable>"#, global.ident.id).unwrap();
     }
     scopes.push(root_scope);
 
