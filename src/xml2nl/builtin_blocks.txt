@@ -2,23 +2,16 @@
 # these will be ignored by the netsblox -> netlogo block-to-function conversions
 
 %'a' xor %'b'
-
-get %'name' from %'sprite'
-
-set %'name' in %'sprite' to %'value'
-
-change %'name' in %'sprite' by %'value'
-
 is %'sprite' alive?
+pick random float %'max'
 
 %'count' clones of %'breed-name'
-
 %'count' new %'breed-name'
-
 %'count' new %'breed-name' (ordered)
 
+delete all clones
 tell %'sprites' to %'action'
 
-delete all clones
-
 move %'count' steps
+random x position
+random y position

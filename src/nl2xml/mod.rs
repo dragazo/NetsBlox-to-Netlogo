@@ -1,6 +1,6 @@
 mod ast;
 
-use std::collections::{BTreeSet, BTreeMap, HashMap};
+use std::collections::{BTreeSet, BTreeMap, HashSet, HashMap};
 use linked_hash_map::LinkedHashMap;
 
 use std::cell::RefCell;
@@ -32,6 +32,17 @@ lazy_static! {
                 let c = items.next();
                 debug_assert!(c.is_none() || c.unwrap().starts_with("#"));
                 debug_assert_eq!(s.insert(a, b), None);
+            }
+        }
+        s
+    };
+    static ref READONLY_BUILTINS: HashMap<&'static str, &'static str> = {
+        let mut s = HashMap::new();
+        for line in include_str!("readonly-builtins.txt").lines().map(|s| s.trim()) {
+            if let Some(ident) = line.split_whitespace().next() {
+                if ident.starts_with('#') { continue }
+                let xml = line[ident.len()..].trim();
+                assert_eq!(s.insert(ident, xml), None);
             }
         }
         s
@@ -72,6 +83,8 @@ pub enum Error<'a> {
     VariableNoTDefined { name: Ident },
     FunctionNotDefined { name: Ident, suggested: Option<&'static str> },
 
+    AssignToReadonlyVar { name: Ident },
+
     FunctionArgCount { func: Ident, invoke_span: Span, got: usize, expected: usize, is_builtin: bool },
     NonReporterInExpr { func: Ident, invoke_span: Span, is_builtin: bool },
     ReporterValueDiscarded { func: Ident, invoke_span: Span, is_builtin: bool },
@@ -87,6 +100,12 @@ impl<'a> From<ParseError<usize, Token<'a>, &'a str>> for Error<'a> {
     }
 }
 
+enum StorageLocation {
+    ReadonlyBuiltin { xml: &'static str },
+    Lexical,
+    Property
+}
+
 #[derive(Default)]
 struct EntityInfo<'a> { props: BTreeMap<&'a str, &'a Ident> }
 
@@ -99,6 +118,8 @@ pub struct Program<'a> {
     breeds: LinkedHashMap<&'a str, BreedSymbol<'a>>,
     funcs: LinkedHashMap<&'a str, &'a Function>,
     patches: EntityInfo<'a>,
+
+    all_breed_props: HashSet<&'a str>,
 }
 impl<'a> Program<'a> {
     // checks for validity in (only) the global scope
@@ -122,11 +143,13 @@ impl<'a> Program<'a> {
         }
         self.validate_define_global(ident)
     }
-    fn ensure_var_defined<'b>(&self, scopes: &[LinkedHashMap<&str, &Ident>], ident: &Ident) -> Result<(), Error<'b>> {
+    fn find_var<'b>(&self, scopes: &[LinkedHashMap<&str, &Ident>], ident: &Ident) -> Result<StorageLocation, Error<'b>> {
         for scope in scopes.iter().rev() {
-            if scope.contains_key(ident.id.as_str()) { return Ok(()) }
+            if scope.contains_key(ident.id.as_str()) { return Ok(StorageLocation::Lexical) }
         }
-        if self.globals.contains_key(ident.id.as_str()) { return Ok(()) }
+        if self.globals.contains_key(ident.id.as_str()) { return Ok(StorageLocation::Lexical) }
+        if self.all_breed_props.contains(ident.id.as_str()) { return Ok(StorageLocation::Property) }
+        if let Some(xml) = READONLY_BUILTINS.get(ident.id.as_str()) { return Ok(StorageLocation::ReadonlyBuiltin { xml }) }
         Err(Error::VariableNoTDefined { name: ident.clone() })
     }
     fn ensure_breed_defined<'b>(&self, ident: &Ident, should_be_plural: Option<bool>) -> Result<(), Error<'b>> {
@@ -173,6 +196,10 @@ impl<'a> Program<'a> {
                 check_usage(call, None, false, in_expr, Some(0))?;
                 *script += r#"<custom-block s="delete all clones"></custom-block>"#;
             }
+            "die" => {
+                check_usage(call, None, false, in_expr, Some(0))?;
+                *script += r#"<block s="removeClone"></block>"#;
+            }
             "forward" | "fd" => {
                 check_usage(call, None, false, in_expr, Some(1))?;
                 *script += r#"<custom-block s="move %n steps">"#;
@@ -183,6 +210,19 @@ impl<'a> Program<'a> {
                 check_usage(call, None, false, in_expr, Some(1))?;
                 *script += if x.starts_with("r") { r#"<block s="turn">"# } else { r#"<block s="turnLeft">"# };
                 self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</block>";
+            }
+            "random-float" => {
+                check_usage(call, None, true, in_expr, Some(1))?;
+                *script += r#"<custom-block s="pick random float %n">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</custom-block>";
+            }
+            "setxy" => {
+                check_usage(call, None, false, in_expr, Some(2))?;
+                *script += r#"<block s="gotoXY">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                self.generate_expr_script(script, scopes, &call.args[1])?;
                 *script += "</block>";
             }
             x => match self.funcs.get(x) {
@@ -241,9 +281,9 @@ impl<'a> Program<'a> {
             }
             Expr::Value(Value::Ident(ident)) => match ident.id.as_str() {
                 x @ ("true" | "false") => write!(script, r#"<block s="reportBoolean"><l><bool>{}</bool></l></block>"#, x).unwrap(),
-                _ => {
-                    self.ensure_var_defined(&*scopes, ident)?;
-                    write!(script, r#"<block var="{}"/>"#, escape_xml(&ident.id)).unwrap();
+                _ => match self.find_var(&*scopes, ident)? {
+                    StorageLocation::Lexical | StorageLocation::Property => write!(script, r#"<block var="{}"/>"#, escape_xml(&ident.id)).unwrap(),
+                    StorageLocation::ReadonlyBuiltin { xml } => *script += xml,
                 }
             }
         }
@@ -287,11 +327,13 @@ impl<'a> Program<'a> {
 
                     scopes.last_mut().unwrap().insert(&vardecl.name.id, &vardecl.name); // add the symbol after evaluating to prevent self-dependency
                 }
-                Stmt::Assign(assign) => {
-                    self.ensure_var_defined(scopes, &assign.name)?;
-                    write!(script, r#"<block s="doSetVar"><l>{}</l>"#, escape_xml(&assign.name.id)).unwrap();
-                    self.generate_expr_script(script, scopes, &assign.value)?;
-                    *script += "</block>";
+                Stmt::Assign(assign) => match self.find_var(scopes, &assign.name)? {
+                    StorageLocation::Lexical | StorageLocation::Property => {
+                        write!(script, r#"<block s="doSetVar"><l>{}</l>"#, escape_xml(&assign.name.id)).unwrap();
+                        self.generate_expr_script(script, scopes, &assign.value)?;
+                        *script += "</block>";
+                    }
+                    StorageLocation::ReadonlyBuiltin { .. } => return Err(Error::AssignToReadonlyVar { name: assign.name.clone() }),
                 }
                 Stmt::Repeat(repeat) => {
                     *script += r#"<block s="doRepeat">"#;
@@ -372,6 +414,10 @@ impl<'a> Program<'a> {
                     }
                 }
             }
+        }
+        // gather up all the owns into one set for storage location resolution
+        for breed in program.breeds.values() {
+            program.all_breed_props.extend(breed.info.borrow().props.keys());
         }
 
         Ok(program) // we're now in a semi-valid state (at least at the global scope)
@@ -460,11 +506,9 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
     }
 
     let mut breed_sprites = String::new();
-    let mut all_breed_vars: BTreeSet<&str> = Default::default();
     let mut plural_breed_names: BTreeSet<&str> = Default::default();
     for (i, breed) in program.breeds.values().filter(|s| s.is_plural).enumerate() {
         plural_breed_names.insert(breed.ident.id.as_str());
-        all_breed_vars.extend(breed.info.borrow().props.keys()); // accumulate breed vars (sorted order)
         parse_breed_sprite(&mut breed_sprites, breed, (i, program.breeds.len() / 2))?;
     }
 
@@ -473,7 +517,6 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
         custom_blocks = custom_blocks,
         breed_sprites = breed_sprites,
         variables = variables,
-        all_breed_vars = escape_xml(&Punctuated(&all_breed_vars, "\r").to_string()),
         plural_breed_names = escape_xml(&Punctuated(&plural_breed_names, "\r").to_string()),
     ))
 }

@@ -177,12 +177,20 @@ impl Program {
                 }
                 Some(block_type) => match block_type.value.as_str() {
                     x @ ("is %obj alive?" | "%n clones of %txt") => return Err(Error::UseOfInternalBlock(x.to_string())),
+                    "%n new %txt" | "%n new %txt (ordered)" => return Err(Error::CreateOutsideOfTell),
 
                     "delete all clones" => Ok("clear-turtles".into()),
+                    "random x position" => Ok("random-xcor".into()),
+                    "random y position" => Ok("random-ycor".into()),
                     "move %n steps" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         let dist = self.parse_script_recursive(&script.children[0])?;
                         Ok(format!("(fd {})", dist))
+                    }
+                    "pick random float %n" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidProject); }
+                        let max = self.parse_script_recursive(&script.children[0])?;
+                        Ok(format!("(random-float {})", max))
                     }
                     "tell %l to %cmdRing" => {
                         if script.children.len() != 2 { return Err(Error::InvalidProject); }
@@ -219,6 +227,7 @@ impl Program {
                         }
                     }
 
+                    "removeClone" => Ok("die".into()),
                     "xPosition" => Ok("xcor".into()),
                     "yPosition" => Ok("ycor".into()),
                     "direction" => Ok("heading".into()),

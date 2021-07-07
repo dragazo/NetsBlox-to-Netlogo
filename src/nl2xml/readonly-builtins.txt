@@ -1,0 +1,5 @@
+# a list of all the readonly builtin variables
+# one for each line, starting with var name, then the xml (rest of line)
+
+random-xcor <custom-block s="random x position"></custom-block>
+random-ycor <custom-block s="random y position"></custom-block>
