@@ -1,0 +1,4 @@
+# a list of patch prop renames when converting from netlogo to netsblox
+pcolor color
+pxcor x position
+pycor y position

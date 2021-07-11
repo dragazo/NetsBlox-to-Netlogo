@@ -27,6 +27,10 @@ lazy_static! {
     static ref PARAM_FINDER: Regex = Regex::new(r"%'([^']+)'").unwrap();
 }
 
+fn rename_patch_prop(name: &str) -> &str {
+    NB2NL_PATCH_PROP_RENAMES.get(name).copied().unwrap_or(name)
+}
+
 /// Possible errors for the NetsBlox to Netlogo conversion.
 #[derive(Debug)]
 pub enum Error {
@@ -187,6 +191,11 @@ impl Program {
                         let dist = self.parse_script_recursive(&script.children[0])?;
                         Ok(format!("(fd {})", dist))
                     }
+                    "pick random 0 up to %n" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidProject); }
+                        let max = self.parse_script_recursive(&script.children[0])?;
+                        Ok(format!("(random {})", max))
+                    }
                     "pick random float %n" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         let max = self.parse_script_recursive(&script.children[0])?;
@@ -287,8 +296,8 @@ impl Program {
 
                         if !var_name.is_empty() && !value.is_empty() {
                             match is_set {
-                                true => Ok(format!("set {} {}", var_name, value)),
-                                false => Ok(format!("set {} ({} + {})", var_name, var_name, value)),
+                                true => Ok(format!("set {var} {val}", var = rename_patch_prop(&var_name), val = value)),
+                                false => Ok(format!("set {var} ({var} + {val})", var = rename_patch_prop(&var_name), val = value)),
                             }
                         }
                         else { Ok(String::new()) }
@@ -296,7 +305,7 @@ impl Program {
                     "get patch %s" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         match script.children[0].name.as_str() {
-                            "l" => Ok(clean_name(&script.children[0].text)?),
+                            "l" => Ok(rename_patch_prop(&clean_name(&script.children[0].text)?).into()),
                             _ => return Err(Error::InvalidProject),
                         }
                     }

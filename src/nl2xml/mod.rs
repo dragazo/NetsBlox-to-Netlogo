@@ -1,6 +1,6 @@
 mod ast;
 
-use std::collections::{BTreeSet, BTreeMap, HashMap};
+use std::collections::{BTreeSet, BTreeMap, HashSet, HashMap};
 use linked_hash_map::LinkedHashMap;
 
 use std::cell::RefCell;
@@ -21,32 +21,13 @@ use xml::escape::escape_str_attribute as escape_xml;
 
 lazy_static! {
     static ref GLOBAL_SCOPE_IDENTS: Vec<Ident> = GLOBAL_SCOPE.iter().map(|&s| Ident { id: s.into(), raw_span: Span(0, 0) }).collect();
-    static ref SUGGESTIONS: HashMap<&'static str, &'static str> = {
-        let mut s = HashMap::new();
-        for line in include_str!("suggestions.txt").lines() {
-            let mut items = line.split_whitespace();
-            if let Some(a) = items.next() {
-                if a.starts_with("#") { continue }
-                let b = items.next().unwrap();
-                debug_assert!(!b.starts_with("#"));
-                let c = items.next();
-                debug_assert!(c.is_none() || c.unwrap().starts_with("#"));
-                debug_assert_eq!(s.insert(a, b), None);
-            }
-        }
-        s
-    };
-    static ref READONLY_BUILTINS: HashMap<&'static str, &'static str> = {
-        let mut s = HashMap::new();
-        for line in include_str!("readonly-builtins.txt").lines().map(|s| s.trim()) {
-            if let Some(ident) = line.split_whitespace().next() {
-                if ident.starts_with('#') { continue }
-                let xml = line[ident.len()..].trim();
-                assert_eq!(s.insert(ident, xml), None);
-            }
-        }
-        s
-    };
+    static ref SUGGESTIONS: HashMap<&'static str, &'static str> = parse_ws_pairs(include_str!("suggestions.txt"));
+    static ref READONLY_BUILTINS: HashMap<&'static str, &'static str> = parse_ws_rest(include_str!("readonly-builtins.txt"));
+    static ref BUILTIN_PATCH_PROPS: HashSet<&'static str> = parse_idents(include_str!("builtin-patch-props.txt"));
+}
+
+fn rename_patch_prop(prop: &str) -> &str {
+    NL2NB_PATCH_PROP_RENAMES.get(prop).copied().unwrap_or(prop)
 }
 
 fn get_func_def_name<'b>(func: &Function) -> Result<String, Error<'b>> {
@@ -106,7 +87,7 @@ enum StorageLocation {
 }
 
 #[derive(Default)]
-struct EntityInfo<'a> { props: BTreeMap<&'a str, &'a Ident> }
+struct EntityInfo<'a> { props: BTreeMap<&'a str, &'a Ident> } // btree so we get sorted order
 
 struct GlobalSymbol<'a> { ident: &'a Ident }
 struct BreedSymbol<'a> { ident: &'a Ident, is_plural: bool, info: Rc<RefCell<EntityInfo<'a>>> }
@@ -146,13 +127,14 @@ impl<'a> Program<'a> {
         self.validate_define_global(ident)
     }
     fn find_var<'b>(&self, scopes: &[LinkedHashMap<&str, &Ident>], ident: &Ident) -> Result<StorageLocation, Error<'b>> {
+        let id = ident.id.as_str();
         for scope in scopes.iter().rev() {
-            if scope.contains_key(ident.id.as_str()) { return Ok(StorageLocation::Lexical) }
+            if scope.contains_key(id) { return Ok(StorageLocation::Lexical) }
         }
-        if self.globals.contains_key(ident.id.as_str()) { return Ok(StorageLocation::Lexical) }
-        if self.all_breed_props.contains_key(ident.id.as_str()) { return Ok(StorageLocation::Property) }
-        if self.patches.props.contains_key(ident.id.as_str()) { return Ok(StorageLocation::PatchesProp) }
-        if let Some(xml) = READONLY_BUILTINS.get(ident.id.as_str()) { return Ok(StorageLocation::ReadonlyBuiltin { xml }) }
+        if self.globals.contains_key(id) { return Ok(StorageLocation::Lexical) }
+        if self.all_breed_props.contains_key(id) { return Ok(StorageLocation::Property) }
+        if BUILTIN_PATCH_PROPS.contains(id) || self.patches.props.contains_key(id) { return Ok(StorageLocation::PatchesProp) }
+        if let Some(xml) = READONLY_BUILTINS.get(id) { return Ok(StorageLocation::ReadonlyBuiltin { xml }) }
         Err(Error::VariableNoTDefined { name: ident.clone() })
     }
     fn ensure_breed_defined<'b>(&self, ident: &Ident, should_be_plural: Option<bool>) -> Result<(), Error<'b>> {
@@ -214,6 +196,12 @@ impl<'a> Program<'a> {
                 *script += if x.starts_with("r") { r#"<block s="turn">"# } else { r#"<block s="turnLeft">"# };
                 self.generate_expr_script(script, scopes, &call.args[0])?;
                 *script += "</block>";
+            }
+            "random" => {
+                check_usage(call, None, true, in_expr, Some(1))?;
+                *script += r#"<custom-block s="pick random 0 up to %n">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</custom-block>";
             }
             "random-float" => {
                 check_usage(call, None, true, in_expr, Some(1))?;
@@ -286,7 +274,7 @@ impl<'a> Program<'a> {
                 x @ ("true" | "false") => write!(script, r#"<block s="reportBoolean"><l><bool>{}</bool></l></block>"#, x).unwrap(),
                 _ => match self.find_var(&*scopes, ident)? {
                     StorageLocation::Lexical | StorageLocation::Property => write!(script, r#"<block var="{}"/>"#, escape_xml(&ident.id)).unwrap(),
-                    StorageLocation::PatchesProp => write!(script, r#"<custom-block s="get patch %s"><l>{}</l></custom-block>"#, escape_xml(&ident.id)).unwrap(),
+                    StorageLocation::PatchesProp => write!(script, r#"<custom-block s="get patch %s"><l>{}</l></custom-block>"#, escape_xml(rename_patch_prop(&ident.id))).unwrap(),
                     StorageLocation::ReadonlyBuiltin { xml } => *script += xml,
                 }
             }
@@ -338,7 +326,7 @@ impl<'a> Program<'a> {
                         *script += "</block>";
                     }
                     StorageLocation::PatchesProp => {
-                        write!(script, r#"<custom-block s="set patch %s to %s"><l>{}</l>"#, escape_xml(&assign.name.id)).unwrap();
+                        write!(script, r#"<custom-block s="set patch %s to %s"><l>{}</l>"#, escape_xml(rename_patch_prop(&assign.name.id))).unwrap();
                         self.generate_expr_script(script, scopes, &assign.value)?;
                         *script += "</custom-block>";
                     }
@@ -522,7 +510,7 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
     ensure_has_required_func(&program, "go", false, &[])?;
 
     let mut breed_sprites = String::new();
-    let mut plural_breed_names: BTreeSet<&str> = Default::default();
+    let mut plural_breed_names: BTreeSet<&str> = Default::default(); // btree so we get sorted order
     for (i, breed) in program.breeds.values().filter(|s| s.is_plural).enumerate() {
         plural_breed_names.insert(breed.ident.id.as_str());
         parse_breed_sprite(&mut breed_sprites, breed, (i, program.breeds.len() / 2))?;
@@ -533,8 +521,8 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
         write!(patches_props, r#"<variable name="{}"><l>0</l></variable>"#, prop).unwrap();
     }
 
-    let stage_size = 495;   // both width and height
-    let patches_radius = 7; // patches range from [-r, r] for both axes
+    let stage_size = 495;    // both width and height
+    let patches_radius = 16; // patches range from [-r, r] for both axes
     let patches_dim = patches_radius * 2 + 1;
     assert_eq!(stage_size % patches_dim, 0);
 

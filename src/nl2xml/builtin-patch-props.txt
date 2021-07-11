@@ -1,0 +1,2 @@
+# the list of all builtin patch props for storage location resolution
+pcolor pxcor pycor

@@ -4,6 +4,7 @@
 %'a' xor %'b'
 is %'sprite' alive?
 pick random float %'max'
+pick random 0 up to %'val'
 
 %'count' clones of %'breed-name'
 %'count' new %'breed-name'
