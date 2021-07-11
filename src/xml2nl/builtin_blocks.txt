@@ -15,3 +15,12 @@ tell %'sprites' to %'action'
 move %'count' steps
 random x position
 random y position
+
+current patch
+
+set patch %'name' to %'value'
+change patch %'name' by %'value'
+get patch %'name'
+
+setup patches
+update background

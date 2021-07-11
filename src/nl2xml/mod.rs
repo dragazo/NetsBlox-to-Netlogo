@@ -102,8 +102,7 @@ impl<'a> From<ParseError<usize, Token<'a>, &'a str>> for Error<'a> {
 
 enum StorageLocation {
     ReadonlyBuiltin { xml: &'static str },
-    Lexical,
-    Property
+    Lexical, Property, PatchesProp,
 }
 
 #[derive(Default)]
@@ -149,6 +148,7 @@ impl<'a> Program<'a> {
         }
         if self.globals.contains_key(ident.id.as_str()) { return Ok(StorageLocation::Lexical) }
         if self.all_breed_props.contains(ident.id.as_str()) { return Ok(StorageLocation::Property) }
+        if self.patches.props.contains_key(ident.id.as_str()) { return Ok(StorageLocation::PatchesProp) }
         if let Some(xml) = READONLY_BUILTINS.get(ident.id.as_str()) { return Ok(StorageLocation::ReadonlyBuiltin { xml }) }
         Err(Error::VariableNoTDefined { name: ident.clone() })
     }
@@ -283,6 +283,7 @@ impl<'a> Program<'a> {
                 x @ ("true" | "false") => write!(script, r#"<block s="reportBoolean"><l><bool>{}</bool></l></block>"#, x).unwrap(),
                 _ => match self.find_var(&*scopes, ident)? {
                     StorageLocation::Lexical | StorageLocation::Property => write!(script, r#"<block var="{}"/>"#, escape_xml(&ident.id)).unwrap(),
+                    StorageLocation::PatchesProp => write!(script, r#"<custom-block s="get patch %s"><l>{}</l></custom-block>"#, escape_xml(&ident.id)).unwrap(),
                     StorageLocation::ReadonlyBuiltin { xml } => *script += xml,
                 }
             }
@@ -333,6 +334,11 @@ impl<'a> Program<'a> {
                         self.generate_expr_script(script, scopes, &assign.value)?;
                         *script += "</block>";
                     }
+                    StorageLocation::PatchesProp => {
+                        write!(script, r#"<custom-block s="set patch %s to %s"><l>{}</l>"#, escape_xml(&assign.name.id)).unwrap();
+                        self.generate_expr_script(script, scopes, &assign.value)?;
+                        *script += "</custom-block>";
+                    }
                     StorageLocation::ReadonlyBuiltin { .. } => return Err(Error::AssignToReadonlyVar { name: assign.name.clone() }),
                 }
                 Stmt::Repeat(repeat) => {
@@ -345,7 +351,7 @@ impl<'a> Program<'a> {
                 Stmt::Create(create) => {
                     self.ensure_breed_defined(&create.breed_plural, Some(true))?;
                     *script += r#"<custom-block s="tell %l to %cmdRing">"#;
-                    *script += if create.ordered { r#"<custom-block s="%n new %txt (ordered)">"# } else { r#"<custom-block s="%n new %txt">"# };
+                    *script += if create.ordered { r#"<custom-block s="%n new %s (ordered)">"# } else { r#"<custom-block s="%n new %s">"# };
                     self.generate_expr_script(script, scopes, &create.count)?;
                     write!(script, r#"<l>{}</l></custom-block><block s="reifyScript"><script>"#, escape_xml(&create.breed_plural.id)).unwrap();
                     self.generate_script(script, scopes, &create.stmts, func)?;
@@ -431,7 +437,7 @@ fn parse_breed_sprite<'b>(breed_sprites: &mut String, breed: &BreedSymbol, index
     let color = HSV::new(ang as f32 * 180.0 / f32c::PI, 0.5, 0.9).to_rgb().to_inner();
 
     let escaped_name = escape_xml(&breed.ident.id);
-    write!(breed_sprites, r#"<sprite name="{name}" x="{x}" y="{y}" heading="{heading}" hidden="true" color="{color}"  pen="middle"><blocks></blocks><variables>"#,
+    write!(breed_sprites, r#"<sprite name="{name}" x="{x}" y="{y}" heading="{heading}" hidden="true" color="{color}" pen="middle" scale="0.5"><blocks></blocks><variables>"#,
         name = escaped_name,
         x = ang.sin() * radius,
         y = ang.cos() * radius,
@@ -512,12 +518,26 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
         parse_breed_sprite(&mut breed_sprites, breed, (i, program.breeds.len() / 2))?;
     }
 
+    let mut patches_props = String::new();
+    for prop in program.patches.props.keys() {
+        write!(patches_props, r#"<variable name="{}"><l>0</l></variable>"#, prop).unwrap();
+    }
+
+    let stage_size = 495;   // both width and height
+    let patches_radius = 7; // patches range from [-r, r] for both axes
+    let patches_dim = patches_radius * 2 + 1;
+    assert_eq!(stage_size % patches_dim, 0);
+
     Ok(format!(include_str!("template.xml"),
         project_name = project_name,
+        stage_size = stage_size,
+        patches_radius = patches_radius,
+        patches_dim = patches_dim,
+        patches_scale = stage_size / patches_dim,
         custom_blocks = custom_blocks,
         breed_sprites = breed_sprites,
         variables = variables,
-        plural_breed_names = escape_xml(&Punctuated(&plural_breed_names, "\r").to_string()),
+        patches_props = patches_props,
     ))
 }
 

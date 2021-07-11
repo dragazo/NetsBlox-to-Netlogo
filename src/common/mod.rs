@@ -14,5 +14,6 @@ fn parse_idents(input: &str) -> BTreeSet<&str> {
 
 lazy_static! {
     pub static ref GLOBAL_SCOPE: BTreeSet<&'static str> = parse_idents(include_str!("globals.txt"));
+    pub static ref FALSE_GLOBAL_SCOPE: BTreeSet<&'static str> = parse_idents(include_str!("false-globals.txt"));
     pub static ref RESERVED_WORDS: BTreeSet<&'static str> = parse_idents(include_str!("reserved.txt"));
 }

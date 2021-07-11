@@ -176,8 +176,8 @@ impl Program {
                     else { return Err(Error::InvalidProject); }
                 }
                 Some(block_type) => match block_type.value.as_str() {
-                    x @ ("is %obj alive?" | "%n clones of %txt") => return Err(Error::UseOfInternalBlock(x.to_string())),
-                    "%n new %txt" | "%n new %txt (ordered)" => return Err(Error::CreateOutsideOfTell),
+                    x @ ("is %obj alive?" | "%n clones of %s") => return Err(Error::UseOfInternalBlock(x.to_string())),
+                    "%n new %s" | "%n new %s (ordered)" => return Err(Error::CreateOutsideOfTell),
 
                     "delete all clones" => Ok("clear-turtles".into()),
                     "random x position" => Ok("random-xcor".into()),
@@ -209,7 +209,7 @@ impl Program {
                         let agents = &script.children[0];
                         let (is_create, is_ordered) = if agents.name != "custom-block" { (false, false) } else {
                             let t = surely(agents.attr("s"))?.value.as_str();
-                            (t == "%n new %txt" || t == "%n new %txt (ordered)", t.ends_with("(ordered)"))
+                            (t == "%n new %s" || t == "%n new %s (ordered)", t.ends_with("(ordered)"))
                         };
 
                         if is_create {
@@ -273,6 +273,32 @@ impl Program {
                             }
                         }
                         else { Ok(String::new()) }
+                    }
+                    x @ ("set patch %s to %s" | "change patch %s by %s") => {
+                        let is_set = x.starts_with("set");
+
+                        if script.children.len() != 2 { return Err(Error::InvalidProject); }
+
+                        let var_name = match script.children[0].name.as_str() {
+                            "l" => clean_name(&script.children[0].text)?,
+                            _ => return Err(Error::InvalidProject),
+                        };
+                        let value = self.parse_script_recursive(&script.children[1])?;
+
+                        if !var_name.is_empty() && !value.is_empty() {
+                            match is_set {
+                                true => Ok(format!("set {} {}", var_name, value)),
+                                false => Ok(format!("set {} ({} + {})", var_name, var_name, value)),
+                            }
+                        }
+                        else { Ok(String::new()) }
+                    }
+                    "get patch %s" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidProject); }
+                        match script.children[0].name.as_str() {
+                            "l" => Ok(clean_name(&script.children[0].text)?),
+                            _ => return Err(Error::InvalidProject),
+                        }
                     }
                     "doReport" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
@@ -527,11 +553,17 @@ impl Display for Program {
         }
         writeln!(f)?;
 
+        let mut patches = None;
         for (breed_name, breed) in self.entities.iter() {
             if breed.props.is_empty() { continue }
+            if breed_name == "patches" { patches = Some(breed); continue }
             writeln!(f, "{}-own [ {} ]", breed_name, breed.props.join(" "))?;
         }
         writeln!(f)?;
+
+        if let Some(patches) = patches {
+            writeln!(f, "patches-own [ {} ]\n", patches.props.join(" "))?;
+        }
 
         for func in self.functions.values() {
             writeln!(f, "{}\n", func.formatted.as_ref().expect("should have formatted all functions by now"))?;
@@ -621,7 +653,7 @@ fn parse_project(room: &XML) -> Result<String, Error> {
     let vars = surely(room.get(&["role", "project", "variables"]))?;
     for var in vars.children.iter() {
         let name = clean_name(&surely(var.attr("name"))?.value)?;
-        if !GLOBAL_SCOPE.contains(name.as_str()) && !program.entities.contains_key(&name) {
+        if !GLOBAL_SCOPE.contains(name.as_str()) && !FALSE_GLOBAL_SCOPE.contains(name.as_str()) && !program.entities.contains_key(&name) {
             program.globals.push(name);
         }
     }
