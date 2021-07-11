@@ -1,6 +1,6 @@
 mod ast;
 
-use std::collections::{BTreeSet, BTreeMap, HashSet, HashMap};
+use std::collections::{BTreeSet, BTreeMap, HashMap};
 use linked_hash_map::LinkedHashMap;
 
 use std::cell::RefCell;
@@ -118,18 +118,21 @@ pub struct Program<'a> {
     funcs: LinkedHashMap<&'a str, &'a Function>,
     patches: EntityInfo<'a>,
 
-    all_breed_props: HashSet<&'a str>,
+    all_breed_props: HashMap<&'a str, &'a Ident>,
 }
 impl<'a> Program<'a> {
     // checks for validity in (only) the global scope
     fn validate_define_global<'b>(&self, ident: &Ident) -> Result<(), Error<'b>> {
-        let prev = self.globals.get(ident.id.as_str()).map(|s| s.ident)
-            .or(self.breeds.get(ident.id.as_str()).map(|s| s.ident))
-            .or(self.funcs.get(ident.id.as_str()).map(|s| &s.name));
+        let id = ident.id.as_str();
+        let prev = self.globals.get(id).map(|s| s.ident)
+            .or(self.breeds.get(id).map(|s| s.ident))
+            .or(self.funcs.get(id).map(|s| &s.name))
+            .or(self.patches.props.get(id).copied())
+            .or(self.all_breed_props.get(id).copied());
         if let Some(prev) = prev {
             return Err(Error::Redefine { name: ident.clone(), previous: prev.clone() });
         }
-        if RESERVED_WORDS.contains(ident.id.as_str()) {
+        if RESERVED_WORDS.contains(id) {
             return Err(Error::RedefineBuiltin { name: ident.clone() });
         }
         Ok(())
@@ -147,7 +150,7 @@ impl<'a> Program<'a> {
             if scope.contains_key(ident.id.as_str()) { return Ok(StorageLocation::Lexical) }
         }
         if self.globals.contains_key(ident.id.as_str()) { return Ok(StorageLocation::Lexical) }
-        if self.all_breed_props.contains(ident.id.as_str()) { return Ok(StorageLocation::Property) }
+        if self.all_breed_props.contains_key(ident.id.as_str()) { return Ok(StorageLocation::Property) }
         if self.patches.props.contains_key(ident.id.as_str()) { return Ok(StorageLocation::PatchesProp) }
         if let Some(xml) = READONLY_BUILTINS.get(ident.id.as_str()) { return Ok(StorageLocation::ReadonlyBuiltin { xml }) }
         Err(Error::VariableNoTDefined { name: ident.clone() })
@@ -392,38 +395,44 @@ impl<'a> Program<'a> {
                     program.validate_define_global(&func.name)?;
                     assert!(program.funcs.insert(&func.name.id, func).is_none());
                 }
-                Item::Own(own) => owns.push(own), // just gather these up for after the first pass
+                Item::Own(own) => match own.plural_owner.id.as_str() {
+                    "patches" => owns.insert(0, own), // patches-own needs to come first for breed prop name conflict deduction
+                    _ => owns.push(own), // just gather these up for after the first pass
+                }
             }
         }
         // process all the own drectives we stored
         for own in owns {
-            fn add_props<'a>(target: &mut BTreeMap<&'a str, &'a Ident>, props: &'a [Ident]) {
+            fn add_props<'a, 'b>(target: &mut BTreeMap<&'a str, &'a Ident>, props: &'a [Ident]) -> Result<(), Error<'b>> {
                 for prop in props {
-                    target.insert(&prop.id, prop);
+                    if let Some(prev) = target.insert(&prop.id, prop) {
+                        return Err(Error::Redefine { name: prop.clone(), previous: prev.clone() })
+                    }
                 }
+                Ok(())
             }
             
             for prop in own.props.iter() {
                 program.validate_define_global(prop)?; // validate the names once up-front
             }
             match own.plural_owner.id.as_str() {
-                "turtles" => for target in program.breeds.values() {
-                    add_props(&mut target.info.borrow_mut().props, &own.props);
+                "turtles" => for target in program.breeds.values().filter(|s| s.is_plural) {
+                    add_props(&mut target.info.borrow_mut().props, &own.props)?;
                 },
-                "patches" => add_props(&mut program.patches.props, &own.props),
+                "patches" => add_props(&mut program.patches.props, &own.props)?,
                 "turtle" | "patch" => return Err(Error::ExpectedPlural { name: own.plural_owner.clone() }),
                 x => match program.breeds.get(x) {
                     None => return Err(Error::BreedNotDefined { name: own.plural_owner.clone() }),
                     Some(target) => {
                         if !target.is_plural { return Err(Error::ExpectedPlural { name: own.plural_owner.clone() }) }
-                        add_props(&mut target.info.borrow_mut().props, &own.props);
+                        add_props(&mut target.info.borrow_mut().props, &own.props)?;
                     }
                 }
             }
         }
         // gather up all the owns into one set for storage location resolution
         for breed in program.breeds.values() {
-            program.all_breed_props.extend(breed.info.borrow().props.keys());
+            program.all_breed_props.extend(breed.info.borrow().props.iter());
         }
 
         Ok(program) // we're now in a semi-valid state (at least at the global scope)
@@ -489,9 +498,6 @@ fn ensure_has_required_func<'b>(program: &Program, name: &'static str, reports: 
 pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>> {
     let items = ast::parse(input)?;
     let program = Program::init_global(&items)?;
-    
-    ensure_has_required_func(&program, "setup", false, &[])?;
-    ensure_has_required_func(&program, "go", false, &[])?;
 
     let mut custom_blocks = String::new();
     let mut scopes = Vec::with_capacity(16);
@@ -510,6 +516,10 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
     for func in program.funcs.values() {
         parse_function(&mut custom_blocks, &program, &mut scopes, func)?;
     }
+
+    // do this after all other parsing because there are more important errors to catch
+    ensure_has_required_func(&program, "setup", false, &[])?;
+    ensure_has_required_func(&program, "go", false, &[])?;
 
     let mut breed_sprites = String::new();
     let mut plural_breed_names: BTreeSet<&str> = Default::default();
@@ -584,4 +594,254 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
 
     assert_eq!(res.funcs.len(), 1);
     assert!(res.funcs.contains_key("commit-sudoku"));
+}
+
+#[test] fn test_disjoint_owns() {
+    if let Err(x) = parse("test", r#"
+    breed [dogs dog]
+    breed [cats cat]
+    breed [pups pup]
+    dogs-own [water]
+    cats-own [water]
+    pups-own [water]
+
+    to setup end
+    to go end
+    "#) { panic!("{:?}", x) }
+    if let Err(x) = parse("test", r#"
+    breed [dogs dog]
+    breed [cats cat]
+    breed [pups pup]
+    turtles-own [water]
+
+    to setup end
+    to go end
+    "#) { panic!("{:?}", x) }
+}
+#[test] fn test_redundant_owns() {
+    match parse("test", r#"
+    breed [dogs dog]
+    breed [cats cat]
+    breed [pups pup]
+    turtles-own [water]
+    cats-own [water]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "water"); assert_eq!(previous.id, "water") }, x => panic!("{:?}", x) }
+}
+
+// types of conflict sources: breed, func, global, lexical, patches prop, breed prop
+// we'll do symmetric tests for all pairs of types, including same type
+
+#[test] fn test_name_overlap_same_type() {
+    match parse("test", r#"
+    breed [cats cat]
+    breed [x catS]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [cats cat]
+    breed [x cAt]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    to foo end
+    to Foo end
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    globals [ merp Merp ]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "merp"); assert_eq!(previous.id, "merp") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    to thing[x]
+        let x 4
+    end
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "x"); assert_eq!(previous.id, "x") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    to thing
+        let x 4
+        if x [
+            let x 6
+        ]
+    end
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "x"); assert_eq!(previous.id, "x") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    patches-own [energy energy]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "energy"); assert_eq!(previous.id, "energy") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [dogs dog]
+    turtles-own [a]
+    dogs-own [a]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "a"); assert_eq!(previous.id, "a") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [dogs dog]
+    dogs-own [a]
+    turtles-own [a]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "a"); assert_eq!(previous.id, "a") }, x => panic!("{:?}", x) }
+}
+#[test] fn test_name_overlap_breed_other() {
+    match parse("test", r#"
+    breed [cats cat]
+    to cats end
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [cats cat]
+    to cat end
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    to cats end
+    breed [cats cat]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    to cat end
+    breed [cats cat]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [cats cat]
+    globals [cats]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [cats cat]
+    globals [cat]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    globals [caTS]
+    breed [cats cAt]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    globals [cat]
+    breed [cats cat]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [cats cat]
+    to go let cAts 0 end
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [cats cat]
+    to go let cat 0 end
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    to go let cats 0 end
+    breed [cats cat]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    to go let cat 0 end
+    breed [cats cat]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [cats cat]
+    cats-own [cats]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [caTs cAt]
+    breed [dogs dog]
+    dogs-own [Cat]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    cats-own [cats]
+    breed [cats cat]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    dogs-own [cAt]
+    breed [cats cat]
+    breed [dogs dog]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [cats cat]
+    patches-own [cat]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    patches-own [cat]
+    breed [cats caT]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+}
+#[test] fn test_name_overlap_func_other() {
+    match parse("test", r#"
+    globals [Foo]
+    to foo end
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    to foo end
+    globals [Foo]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    to foo let Foo 4 end
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    to foo end
+    to bar let Foo 54 end
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    to foo end
+    patches-own [FOO]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    patches-own [FOO]
+    to foo end
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [birds bird]
+    birds-own [FoO]
+    to foo end
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [birds bird]
+    to foo end
+    birds-own [FoO]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+}
+#[test] fn test_name_overlap_global_other() {
+    match parse("test", r#"
+    globals [derp]
+    to foo let Derp 5 end
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    to foo let Derp 5 end
+    globals [derp]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    globals [derp]
+    breed [ducks duck]
+    ducks-own [derP]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [ducks duck]
+    ducks-own [derP]
+    globals [derp]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    globals [derp]
+    patches-own [DERP]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    patches-own [DERP]
+    globals [derp]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
+}
+#[test] fn test_name_overlap_lexical_other() {
+    match parse("test", r#"
+    patches-own [shells]
+    to foo let sheLLs 3 end
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "shells"); assert_eq!(previous.id, "shells") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    to foo let sheLLs 3 end
+    patches-own [shells]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "shells"); assert_eq!(previous.id, "shells") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    to foo let sheLLs 3 end
+    breed [geese goose]
+    geese-own [shells]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "shells"); assert_eq!(previous.id, "shells") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [geese goose]
+    geese-own [shells]
+    to foo let sheLLs 3 end
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "shells"); assert_eq!(previous.id, "shells") }, x => panic!("{:?}", x) }
+}
+#[test] fn test_name_overlap_patchprop_other() {
+    match parse("test", r#"
+    patches-own [tic-tAcs]
+    breed [dogs dog]
+    dogs-own [Tic-TACs]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "tic-tacs"); assert_eq!(previous.id, "tic-tacs") }, x => panic!("{:?}", x) }
+    match parse("test", r#"
+    breed [dogs dog]
+    dogs-own [Tic-TACs]
+    patches-own [tic-tAcs]
+    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "tic-tacs"); assert_eq!(previous.id, "tic-tacs") }, x => panic!("{:?}", x) }
 }
