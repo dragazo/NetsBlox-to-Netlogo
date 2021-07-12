@@ -49,10 +49,15 @@ pub enum Error {
     CreateOutsideOfTell,
     /// The project used a block which was only intended for core behavior (not user-level code).
     UseOfInternalBlock(String),
+    
     /// The project refered to a breed name indirectly, which is not currently supported.
     NonConstantBreedName,
     /// The project had a code block which was non-constant or non-inlined (e.g. a lambda function).
     NonConstantCodeBlock,
+    /// The project refered to a patch prop indirectly (not by-name)
+    NonConstantPatchProp,
+    /// The project refered to a color indirectly (not by-name)
+    NonConstantColor,
 
     /// A set block was used to set the builtin ticks variable to a non-zero value (not allowed).
     SetTicksToNonZero,
@@ -133,7 +138,7 @@ fn parse_xml_root<R: Read>(xml: &mut EventReader<R>, root_name: OwnedName, root_
 struct Entity {
     plural: String,
     singular: String,
-    props: Vec<String>,
+    props: LinkedHashMap<String, ()>,
 }
 #[derive(Debug)]
 struct Function {
@@ -255,6 +260,13 @@ impl Program {
                             Ok(vars.join("\n"))
                         }
                     }
+                    "script variable %upvar = %s" => {
+                        if script.children.len() != 2 { return Err(Error::InvalidProject); }
+                        if script.children[0].name != "l" { return Err(Error::InvalidProject); }
+                        let name = clean_name(&script.children[0].text)?;
+                        let value = self.parse_script_recursive(&script.children[1])?;
+                        Ok(format!(r#"let {} {}"#, name, value))
+                    }
                     x @ ("doSetVar" | "doChangeVar") => {
                         let is_set = x == "doSetVar";
 
@@ -306,9 +318,17 @@ impl Program {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         match script.children[0].name.as_str() {
                             "l" => Ok(rename_patch_prop(&clean_name(&script.children[0].text)?).into()),
-                            _ => return Err(Error::InvalidProject),
+                            _ => return Err(Error::NonConstantPatchProp),
                         }
                     }
+                    "color %s" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidProject); }
+                        match script.children[0].name.as_str() {
+                            "l" => Ok(clean_name(&script.children[0].text)?),
+                            _ => return Err(Error::NonConstantColor),
+                        }
+                    }
+
                     "doReport" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         let value = self.parse_script_recursive(&script.children[0])?;
@@ -540,7 +560,7 @@ impl Program {
                                 items.push(val);
                             }
 
-                            Ok(if items.len() == 1 { items.into_iter().next().unwrap() } else { format!("({})", Punctuated(&items, " ")) })
+                            Ok(if items.len() == 1 { items.into_iter().next().unwrap() } else { format!("({})", Punctuated(items.iter(), " ")) })
                         }
                     }
                 }
@@ -553,7 +573,7 @@ impl Program {
 impl Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if !self.globals.is_empty() {
-            writeln!(f, "globals [ {} ]\n", Punctuated(&self.globals, ", "))?;
+            writeln!(f, "globals [ {} ]\n", Punctuated(self.globals.iter(), ", "))?;
         }
 
         for breed in self.entities.values() {
@@ -562,16 +582,26 @@ impl Display for Program {
         }
         writeln!(f)?;
 
+        let breeds = self.entities.values().filter(|s| s.plural != "patches");
+        let all_breed_props: HashSet<&str> = breeds.clone().flat_map(|s| s.props.keys().map(|s| s.as_str())).collect();
+        let common_props: LinkedHashMap<&str, ()> = all_breed_props.iter().copied().filter(|&s| breeds.clone().all(|b| b.props.contains_key(s))).map(|s| (s, ())).collect();
+
+        if !common_props.is_empty() {
+            writeln!(f, "turtles-own [ {} ]", Punctuated(common_props.keys(), " "))?;
+        }
+
         let mut patches = None;
         for (breed_name, breed) in self.entities.iter() {
-            if breed.props.is_empty() { continue }
+            if breed.props.is_empty() { continue } // must happen before patches check, since we want to ignore empty patch props
             if breed_name == "patches" { patches = Some(breed); continue }
-            writeln!(f, "{}-own [ {} ]", breed_name, breed.props.join(" "))?;
+
+            let props: Vec<_> = breed.props.keys().filter(|p| !common_props.contains_key(p.as_str())).collect();
+            if !props.is_empty() { writeln!(f, "{}-own [ {} ]", breed_name, Punctuated(props.iter(), " "))?; }
         }
         writeln!(f)?;
 
         if let Some(patches) = patches {
-            writeln!(f, "patches-own [ {} ]\n", patches.props.join(" "))?;
+            writeln!(f, "patches-own [ {} ]\n", Punctuated(patches.props.keys(), " "))?;
         }
 
         for func in self.functions.values() {
@@ -619,7 +649,7 @@ fn parse_function_body(program: &mut Program, block: &XML) -> Result<(), Error> 
         let info = program.functions.get(&meta_name).expect("should have already parsed the header");
         match info.params.is_empty() {
             true => format!("{} {}\n{}\nend", if info.reports { "to-report" } else { "to" }, info.name, action),
-            false => format!("{} {} [{}]\n{}\nend", if info.reports { "to-report" } else { "to" }, info.name, Punctuated(&info.params, " "), action),
+            false => format!("{} {} [{}]\n{}\nend", if info.reports { "to-report" } else { "to" }, info.name, Punctuated(info.params.iter(), " "), action),
         }
     };
 
@@ -630,10 +660,10 @@ fn parse_sprite(program: &mut Program, sprite: &XML) -> Result<(), Error> {
     let plural = clean_name(&surely(sprite.attr("name"))?.value)?;
     let singular = format!("a-{}", plural); // currently there's no metadata for singular form
 
-    let mut props = vec![];
+    let mut props = LinkedHashMap::new();
     for var in surely(sprite.get(&["variables"]))?.children.iter() {
         let name = clean_name(&surely(var.attr("name"))?.value)?;
-        props.push(name);
+        if props.insert(name, ()).is_some() { return Err(Error::InvalidProject); }
     }
 
     let entity = Entity { plural: plural.clone(), singular, props };

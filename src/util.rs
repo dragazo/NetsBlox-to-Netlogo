@@ -4,10 +4,10 @@ pub fn indent(code: &str) -> String {
     code.lines().map(|s| format!("    {}", s)).collect::<Vec<_>>().join("\n")
 }
 
-pub struct Punctuated<'a, T: IntoIterator + Copy>(pub T, pub &'a str);
-impl<'a, T: IntoIterator + Copy> Debug for Punctuated<'a, T> where <T as IntoIterator>::Item: Debug {
+pub struct Punctuated<'a, T: Iterator + Clone>(pub T, pub &'a str);
+impl<'a, T: Iterator + Clone> Debug for Punctuated<'a, T> where <T as Iterator>::Item: Debug {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut vals = self.0.into_iter();
+        let mut vals = self.0.clone().into_iter();
         if let Some(first) = vals.next() {
             write!(f, "{:?}", first)?;
             for rest in vals {
@@ -17,9 +17,9 @@ impl<'a, T: IntoIterator + Copy> Debug for Punctuated<'a, T> where <T as IntoIte
         Ok(())
     }
 }
-impl<'a, T: IntoIterator + Copy> Display for Punctuated<'a, T> where <T as IntoIterator>::Item: Display {
+impl<'a, T: Iterator + Clone> Display for Punctuated<'a, T> where <T as Iterator>::Item: Display {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut vals = self.0.into_iter();
+        let mut vals = self.0.clone().into_iter();
         if let Some(first) = vals.next() {
             write!(f, "{}", first)?;
             for rest in vals {

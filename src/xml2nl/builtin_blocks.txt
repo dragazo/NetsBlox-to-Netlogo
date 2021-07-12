@@ -1,10 +1,14 @@
 # a list of all the builtin blocks we generate in the netlogo -> netsblox direction (defined primarily in template.xml).
 # these will be ignored by the netsblox -> netlogo block-to-function conversions
 
+script variable %'a' = %'value'
+
 %'a' xor %'b'
 is %'sprite' alive?
 pick random float %'max'
 pick random 0 up to %'val'
+
+color %'name'
 
 %'count' clones of %'breed-name'
 %'count' new %'breed-name'

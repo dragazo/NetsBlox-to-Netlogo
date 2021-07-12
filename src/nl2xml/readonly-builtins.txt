@@ -3,3 +3,18 @@
 
 random-xcor <custom-block s="random x position"></custom-block>
 random-ycor <custom-block s="random y position"></custom-block>
+
+gray <custom-block s="color %s"><l>gray</l></custom-block>
+red <custom-block s="color %s"><l>red</l></custom-block>
+orange <custom-block s="color %s"><l>orange</l></custom-block>
+brown <custom-block s="color %s"><l>brown</l></custom-block>
+yellow <custom-block s="color %s"><l>yellow</l></custom-block>
+green <custom-block s="color %s"><l>green</l></custom-block>
+lime <custom-block s="color %s"><l>lime</l></custom-block>
+turquoise <custom-block s="color %s"><l>turquoise</l></custom-block>
+cyan <custom-block s="color %s"><l>cyan</l></custom-block>
+sky <custom-block s="color %s"><l>sky</l></custom-block>
+blue <custom-block s="color %s"><l>blue</l></custom-block>
+violet <custom-block s="color %s"><l>violet</l></custom-block>
+magenta <custom-block s="color %s"><l>magenta</l></custom-block>
+pink <custom-block s="color %s"><l>pink</l></custom-block>

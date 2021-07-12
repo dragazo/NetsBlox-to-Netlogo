@@ -313,9 +313,9 @@ impl<'a> Program<'a> {
                 Stmt::VarDecl(vardecl) => {
                     self.validate_define_lexical(&vardecl.name, scopes)?; // check if the name is valid before we do anything else
                     
-                    write!(script, r#"<block s="doDeclareVariables"><list><l>{name}</l></list></block><block s="doSetVar"><l>{name}</l>"#, name = escape_xml(&vardecl.name.id)).unwrap();
+                    write!(script, r#"<custom-block s="script variable %upvar = %s"><l>{}</l>"#, escape_xml(&vardecl.name.id)).unwrap();
                     self.generate_expr_script(script, scopes, &vardecl.value)?;
-                    *script += "</block>";
+                    *script += "</custom-block>";
 
                     scopes.last_mut().unwrap().insert(&vardecl.name.id, &vardecl.name); // add the symbol after evaluating to prevent self-dependency
                 }
@@ -439,7 +439,7 @@ fn parse_breed_sprite<'b>(breed_sprites: &mut String, breed: &BreedSymbol, index
         x = ang.sin() * radius,
         y = ang.cos() * radius,
         heading = ang * 180.0 / f64c::PI,
-        color = Punctuated(&[color.0, color.1, color.2], ",")).unwrap();
+        color = Punctuated([color.0, color.1, color.2].iter(), ",")).unwrap();
     for var in breed.info.borrow().props.keys() {
         write!(breed_sprites, r#"<variable name="{}"><l>0</l></variable>"#, escape_xml(var)).unwrap();
     }
@@ -536,6 +536,8 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
         breed_sprites = breed_sprites,
         variables = variables,
         patches_props = patches_props,
+        plural_breed_names = escape_xml(&Punctuated(program.breeds.values().filter(|b| b.is_plural).map(|b| &b.ident.id), "\r").to_string()),
+        patch_props = escape_xml(&Punctuated(["color"].iter().chain(program.patches.props.keys()), "\r").to_string()),
     ))
 }
 
