@@ -1,3 +1,2 @@
 # these are dummy global items that exist in the netsblox global scope but aren't user defined globals or breeds
 # they're basically just ignored during translation back into netlogo
-color

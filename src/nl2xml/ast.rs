@@ -85,6 +85,7 @@ pub enum Stmt {
     Repeat(Repeat),
     Create(Create),
     Ask(Ask),
+    Hatch(Hatch),
 }
 impl Spanned for Stmt {
     fn span(&self) -> Span {
@@ -97,6 +98,7 @@ impl Spanned for Stmt {
             Stmt::Repeat(x) => x.span(),
             Stmt::Create(x) => x.span(),
             Stmt::Ask(x) => x.span(),
+            Stmt::Hatch(x) => x.span(),
         }
     }
 }
@@ -108,8 +110,9 @@ impl Spanned for Stmt {
 #[derive(Debug, Clone)] pub struct Repeat { pub count: Expr, pub stmts: Vec<Stmt>, pub raw_span: Span }
 #[derive(Debug, Clone)] pub struct Create { pub breed_plural: Ident, pub ordered: bool, pub count: Expr, pub stmts: Vec<Stmt>, pub raw_span: Span }
 #[derive(Debug, Clone)] pub struct Ask { pub agents: Expr, pub stmts: Vec<Stmt>, pub raw_span: Span }
+#[derive(Debug, Clone)] pub struct Hatch { pub count: Expr, pub stmts: Vec<Stmt>, pub raw_span: Span }
 
-raw_span_impl! { IfElse, Repeat, Create, Ask }
+raw_span_impl! { IfElse, Repeat, Create, Ask, Hatch }
 impl Spanned for Report { fn span(&self) -> Span { Span(self.lspan, self.value.span().1) } }
 impl Spanned for VarDecl { fn span(&self) -> Span { Span(self.lspan, self.value.span().1) } }
 impl Spanned for Assign { fn span(&self) -> Span { Span(self.lspan, self.value.span().1) } }

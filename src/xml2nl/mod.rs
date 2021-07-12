@@ -185,8 +185,8 @@ impl Program {
                     else { return Err(Error::InvalidProject); }
                 }
                 Some(block_type) => match block_type.value.as_str() {
-                    x @ ("is %obj alive?" | "%n clones of %s") => return Err(Error::UseOfInternalBlock(x.to_string())),
-                    "%n new %s" | "%n new %s (ordered)" => return Err(Error::CreateOutsideOfTell),
+                    x @ "is %obj alive?" => return Err(Error::UseOfInternalBlock(x.to_string())),
+                    "%n clones" | "%n new %s" | "%n new %s (ordered)" => return Err(Error::CreateOutsideOfTell),
 
                     "delete all clones" => Ok("clear-turtles".into()),
                     "random x position" => Ok("random-xcor".into()),
@@ -221,10 +221,13 @@ impl Program {
                         };
 
                         let agents = &script.children[0];
-                        let (is_create, is_ordered) = if agents.name != "custom-block" { (false, false) } else {
+                        let (is_create, is_ordered, is_hatch) = if agents.name != "custom-block" { (false, false, false) } else {
                             let t = surely(agents.attr("s"))?.value.as_str();
-                            (t == "%n new %s" || t == "%n new %s (ordered)", t.ends_with("(ordered)"))
+                            if t == "%n new %s" || t == "%n new %s (ordered)" { (true, t.ends_with("(ordered)"), false) }
+                            else if t == "%n clones" { (false, false, true) }
+                            else { (false, false, false) }
                         };
+                        debug_assert!(!is_create || !is_hatch);
 
                         if is_create {
                             if agents.children.len() != 2 { return Err(Error::InvalidProject); }
@@ -234,6 +237,11 @@ impl Program {
                                 _ => return Err(Error::NonConstantBreedName),
                             };
                             Ok(format!("{}{} {} [\n{}\n]", if is_ordered { "create-ordered-" } else { "create-" }, breed, count, indent(&action)))
+                        }
+                        else if is_hatch {
+                            if agents.children.len() != 1 { return Err(Error::InvalidProject); }
+                            let count = self.parse_script_recursive(&agents.children[0])?;
+                            Ok(format!("hatch {} [\n{}\n]", count, indent(&action)))
                         }
                         else {
                             let target = self.parse_script_recursive(agents)?;

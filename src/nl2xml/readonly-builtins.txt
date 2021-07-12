@@ -4,7 +4,9 @@
 random-xcor <custom-block s="random x position"></custom-block>
 random-ycor <custom-block s="random y position"></custom-block>
 
+black <custom-block s="color %s"><l>black</l></custom-block>
 gray <custom-block s="color %s"><l>gray</l></custom-block>
+white <custom-block s="color %s"><l>white</l></custom-block>
 red <custom-block s="color %s"><l>red</l></custom-block>
 orange <custom-block s="color %s"><l>orange</l></custom-block>
 brown <custom-block s="color %s"><l>brown</l></custom-block>

@@ -10,7 +10,7 @@ pick random 0 up to %'val'
 
 color %'name'
 
-%'count' clones of %'breed-name'
+%'count' clones
 %'count' new %'breed-name'
 %'count' new %'breed-name' (ordered)
 

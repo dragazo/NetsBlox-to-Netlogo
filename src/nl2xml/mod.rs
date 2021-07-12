@@ -82,7 +82,7 @@ impl<'a> From<ParseError<usize, Token<'a>, &'a str>> for Error<'a> {
 }
 
 enum StorageLocation {
-    ReadonlyBuiltin { xml: &'static str },
+    Builtin { get: &'static str, set: Option<(&'static str, &'static str)> },
     Lexical, Property, PatchesProp,
 }
 
@@ -134,8 +134,13 @@ impl<'a> Program<'a> {
         if self.globals.contains_key(id) { return Ok(StorageLocation::Lexical) }
         if self.all_breed_props.contains_key(id) { return Ok(StorageLocation::Property) }
         if BUILTIN_PATCH_PROPS.contains(id) || self.patches.props.contains_key(id) { return Ok(StorageLocation::PatchesProp) }
-        if let Some(xml) = READONLY_BUILTINS.get(id) { return Ok(StorageLocation::ReadonlyBuiltin { xml }) }
-        Err(Error::VariableNoTDefined { name: ident.clone() })
+        if let Some(get) = READONLY_BUILTINS.get(id) { return Ok(StorageLocation::Builtin { get, set: None }) }
+
+        // the rest are more annoying to do as standard files
+        Ok(match id {
+            "heading" => StorageLocation::Builtin { get: r#"<block s="direction"></block>"#, set: Some((r#"<block s="setHeading">"#, "</block>")) },
+            _ => return Err(Error::VariableNoTDefined { name: ident.clone() }),
+        })
     }
     fn ensure_breed_defined<'b>(&self, ident: &Ident, should_be_plural: Option<bool>) -> Result<(), Error<'b>> {
         let breed = match self.breeds.get(ident.id.as_str()) {
@@ -275,7 +280,7 @@ impl<'a> Program<'a> {
                 _ => match self.find_var(&*scopes, ident)? {
                     StorageLocation::Lexical | StorageLocation::Property => write!(script, r#"<block var="{}"/>"#, escape_xml(&ident.id)).unwrap(),
                     StorageLocation::PatchesProp => write!(script, r#"<custom-block s="get patch %s"><l>{}</l></custom-block>"#, escape_xml(rename_patch_prop(&ident.id))).unwrap(),
-                    StorageLocation::ReadonlyBuiltin { xml } => *script += xml,
+                    StorageLocation::Builtin { get, .. } => *script += get,
                 }
             }
         }
@@ -330,7 +335,14 @@ impl<'a> Program<'a> {
                         self.generate_expr_script(script, scopes, &assign.value)?;
                         *script += "</custom-block>";
                     }
-                    StorageLocation::ReadonlyBuiltin { .. } => return Err(Error::AssignToReadonlyVar { name: assign.name.clone() }),
+                    StorageLocation::Builtin { set, .. } => match set {
+                        Some(set) => {
+                            *script += set.0;
+                            self.generate_expr_script(script, scopes, &assign.value)?;
+                            *script += set.1;
+                        }
+                        None => return Err(Error::AssignToReadonlyVar { name: assign.name.clone() }),
+                    }
                 }
                 Stmt::Repeat(repeat) => {
                     *script += r#"<block s="doRepeat">"#;
@@ -353,6 +365,13 @@ impl<'a> Program<'a> {
                     self.generate_expr_script(script, scopes, &ask.agents)?;
                     *script += r#"<block s="reifyScript"><script>"#;
                     self.generate_script(script, scopes, &ask.stmts, func)?;
+                    *script += "</script><list></list></block></custom-block>";
+                }
+                Stmt::Hatch(hatch) => {
+                    *script += r#"<custom-block s="tell %l to %cmdRing"><custom-block s="%n clones">"#;
+                    self.generate_expr_script(script, scopes, &hatch.count)?;
+                    *script += r#"</custom-block><block s="reifyScript"><script>"#;
+                    self.generate_script(script, scopes, &hatch.stmts, func)?;
                     *script += "</script><list></list></block></custom-block>";
                 }
             }
