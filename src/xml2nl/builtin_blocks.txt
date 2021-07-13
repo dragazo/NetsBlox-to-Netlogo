@@ -7,7 +7,7 @@ script variable %'a' = %'value'
 is %'sprite' alive?
 pick random float %'max'
 pick random 0 up to %'val'
-atan x = %'x' y = %'y'
+atan x: %'x' y: %'y'
 
 color %'name'
 set pen color to %'color'
@@ -27,6 +27,8 @@ reset global variables
 reset everything
 
 current patch
+distance from x: %'x' y: %'y'
+distance from %'sprite'
 
 set patch %'name' to %'value'
 change patch %'name' by %'value'
@@ -45,6 +47,8 @@ random y position
 
 turtle set %'items'
 is %'set' empty? (turtle set)
+random item %'set' (turtle set)
+nobody
 
 setup patches
 update background

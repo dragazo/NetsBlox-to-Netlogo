@@ -56,6 +56,9 @@ to go
         (fd 1)
         set pcolor brown
         set energy (energy - (random-float 1))
+        let dd (distancexy 0 0)
+        let t (one-of turtles)
+        if t != nobody [ set dd (distance t) ]
         if energy < 0 [
             ifelse (random-float 1) < 0.1 [ die ] [
                 ifelse (random-float 1) < 0.01 [
@@ -89,7 +92,7 @@ to do-something
 end
 to overflow
     let v 0
-    while v < 10 [ set v v + 1 ]
+    while [v < 10] [ set v v + 1 ]
     loop [ set v v + 1 ]
 end
 @#$#@#$#@

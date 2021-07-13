@@ -245,7 +245,7 @@ impl<'a> Program<'a> {
             }
             "atan" => {
                 check_usage(call, None, true, in_expr, Some(2))?;
-                *script += r#"<custom-block s="atan x = %n y = %n">"#;
+                *script += r#"<custom-block s="atan x: %n y: %n">"#;
                 self.generate_expr_script(script, scopes, &call.args[0])?;
                 self.generate_expr_script(script, scopes, &call.args[1])?;
                 *script += "</custom-block>";
@@ -255,6 +255,25 @@ impl<'a> Program<'a> {
                 *script += r#"<block s="reportNot"><custom-block s="is %l empty? (turtle set)">"#;
                 self.generate_expr_script(script, scopes, &call.args[0])?;
                 *script += "</custom-block></block>";
+            }
+            "one-of" => {
+                check_usage(call, None, true, in_expr, Some(1))?;
+                *script += r#"<custom-block s="random item %l (turtle set)">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</custom-block>";
+            }
+            "distancexy" => {
+                check_usage(call, None, true, in_expr, Some(2))?;
+                *script += r#"<custom-block s="distance from x: %n y: %n">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                self.generate_expr_script(script, scopes, &call.args[1])?;
+                *script += "</custom-block>";
+            }
+            "distance" => {
+                check_usage(call, None, true, in_expr, Some(1))?;
+                *script += r#"<custom-block s="distance from %obj">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</custom-block>";
             }
             x => match self.funcs.get(x) {
                 None => return Err(Error::FunctionNotDefined { name: call.name.clone(), suggested: SUGGESTIONS.get(x).copied() }),

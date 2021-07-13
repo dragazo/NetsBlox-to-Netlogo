@@ -22,3 +22,4 @@ magenta <custom-block s="color %s"><l>magenta</l></custom-block>
 pink <custom-block s="color %s"><l>pink</l></custom-block>
 
 no-turtles <custom-block s="turtle set %mult%obj"><list></list></custom-block>
+nobody <custom-block s="nobody"></custom-block>
