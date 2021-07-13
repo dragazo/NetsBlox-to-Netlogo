@@ -9,23 +9,31 @@ pick random float %'max'
 pick random 0 up to %'val'
 
 color %'name'
+set pen color to %'color'
+pen color
+
+set scale to %'scale' x
+scale
 
 %'count' clones
 %'count' new %'breed-name'
 %'count' new %'breed-name' (ordered)
-
-delete all clones
 tell %'sprites' to %'action'
 
-move %'count' steps
-random x position
-random y position
+delete all clones
+reset patches
+reset global variables
+reset everything
 
 current patch
 
 set patch %'name' to %'value'
 change patch %'name' by %'value'
 get patch %'name'
+
+move %'count' steps
+random x position
+random y position
 
 setup patches
 update background

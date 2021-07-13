@@ -14,7 +14,12 @@ patches-own [ countdown ]
 
 to setup
     clear-turtles
+    clear-patches
+    clear-globals
     reset-ticks
+    clear-ticks ; for netsblox purposes, this is identical to reset-ticks
+    clear-all
+
     ask patches [
         set countdown (random 100)
         set pcolor (list (random 256) (random 256) (random 256))
@@ -23,6 +28,11 @@ to setup
     create-ordered-birds 100 [
         (fd 50) 
         set energy 10
+        set color red
+        set color (list 123 32 12)
+        let temp color
+        set size 0.5 + (random 1.5)
+        let temp2 size
     ]
 end
 to go
@@ -42,7 +52,7 @@ to go
             ifelse (random-float 1) < 0.1 [ die ] [
                 ifelse (random-float 1) < 0.01 [
                     hatch 1 [ set heading heading + (random 360) (fd 1) ]
-                ] [ set energy 10 (setxy random-xcor random-ycor)  ]
+                ] [ set energy 10 (setxy random-xcor random-ycor) set color (list (random 256) (random 256) (random 256)) ]
             ]
         ]
     ]

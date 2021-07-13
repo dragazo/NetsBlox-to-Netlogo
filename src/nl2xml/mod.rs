@@ -19,6 +19,8 @@ use lalrpop_util::{ParseError, lexer::Token};
 
 use xml::escape::escape_str_attribute as escape_xml;
 
+const BASE_SPRITE_SCALE: f64 = 0.5;
+
 lazy_static! {
     static ref GLOBAL_SCOPE_IDENTS: Vec<Ident> = GLOBAL_SCOPE.iter().map(|&s| Ident { id: s.into(), raw_span: Span(0, 0) }).collect();
     static ref SUGGESTIONS: HashMap<&'static str, &'static str> = parse_ws_pairs(include_str!("suggestions.txt"));
@@ -65,6 +67,8 @@ pub enum Error<'a> {
     FunctionNotDefined { name: Ident, suggested: Option<&'static str> },
 
     AssignToReadonlyVar { name: Ident },
+    
+    InvalidColor { color_span: Span },
 
     FunctionArgCount { func: Ident, invoke_span: Span, got: usize, expected: usize, is_builtin: bool },
     NonReporterInExpr { func: Ident, invoke_span: Span, is_builtin: bool },
@@ -84,6 +88,8 @@ impl<'a> From<ParseError<usize, Token<'a>, &'a str>> for Error<'a> {
 enum StorageLocation {
     Builtin { get: &'static str, set: Option<(&'static str, &'static str)> },
     Lexical, Property, PatchesProp,
+
+    BuiltinColor,
 }
 
 #[derive(Default)]
@@ -139,6 +145,8 @@ impl<'a> Program<'a> {
         // the rest are more annoying to do as standard files
         Ok(match id {
             "heading" => StorageLocation::Builtin { get: r#"<block s="direction"></block>"#, set: Some((r#"<block s="setHeading">"#, "</block>")) },
+            "size" => StorageLocation::Builtin { get: r#"<custom-block s="scale"></custom-block>"#, set: Some((r#"<custom-block s="set scale to %n x">"#, "</custom-block>")) },
+            "color" => StorageLocation::BuiltinColor,
             _ => return Err(Error::VariableNoTDefined { name: ident.clone() }),
         })
     }
@@ -174,17 +182,29 @@ impl<'a> Program<'a> {
             Ok(())
         }
         match call.name.id.as_str() {
-            "reset-ticks" => {
-                check_usage(call, None, false, in_expr, Some(0))?;
-                *script += r#"<block s="doSetVar"><l>ticks</l><l>0</l></block>"#;
-            }
             "tick" => {
                 check_usage(call, None, false, in_expr, Some(0))?;
                 *script += r#"<block s="doChangeVar"><l>ticks</l><l>1</l></block>"#;
             }
+            "reset-ticks" | "clear-ticks" => {
+                check_usage(call, None, false, in_expr, Some(0))?;
+                *script += r#"<block s="doSetVar"><l>ticks</l><l>0</l></block>"#;
+            }
             "clear-turtles" => {
                 check_usage(call, None, false, in_expr, Some(0))?;
                 *script += r#"<custom-block s="delete all clones"></custom-block>"#;
+            }
+            "clear-patches" => {
+                check_usage(call, None, false, in_expr, Some(0))?;
+                *script += r#"<custom-block s="reset patches"></custom-block>"#;
+            }
+            "clear-globals" => {
+                check_usage(call, None, false, in_expr, Some(0))?;
+                *script += r#"<custom-block s="reset global variables"></custom-block>"#;
+            }
+            "clear-all" => {
+                check_usage(call, None, false, in_expr, Some(0))?;
+                *script += r#"<custom-block s="reset everything"></custom-block>"#;
             }
             "die" => {
                 check_usage(call, None, false, in_expr, Some(0))?;
@@ -281,6 +301,7 @@ impl<'a> Program<'a> {
                     StorageLocation::Lexical | StorageLocation::Property => write!(script, r#"<block var="{}"/>"#, escape_xml(&ident.id)).unwrap(),
                     StorageLocation::PatchesProp => write!(script, r#"<custom-block s="get patch %s"><l>{}</l></custom-block>"#, escape_xml(rename_patch_prop(&ident.id))).unwrap(),
                     StorageLocation::Builtin { get, .. } => *script += get,
+                    StorageLocation::BuiltinColor => *script += r#"<custom-block s="pen color"></custom-block>"#,
                 }
             }
         }
@@ -342,6 +363,24 @@ impl<'a> Program<'a> {
                             *script += set.1;
                         }
                         None => return Err(Error::AssignToReadonlyVar { name: assign.name.clone() }),
+                    }
+                    StorageLocation::BuiltinColor => {
+                        let is_general = match &assign.value {
+                            Expr::Value(Value::List(list)) => match list.values.as_slice() {
+                                [Expr::Value(Value::Number(r)), Expr::Value(Value::Number(g)), Expr::Value(Value::Number(b))] => {
+                                    write!(script, r#"<block s="setColor"><color>{},{},{},1</color></block>"#, r.value, g.value, b.value).unwrap();
+                                    false
+                                }
+                                [_, _, _] => true,
+                                _ => return Err(Error::InvalidColor { color_span: assign.value.span() }), // not three values
+                            }
+                            _ => true,
+                        };
+                        if is_general {
+                            *script += r#"<custom-block s="set pen color to %l">"#;
+                            self.generate_expr_script(script, scopes, &assign.value)?;
+                            *script += "</custom-block>";
+                        }
                     }
                 }
                 Stmt::Repeat(repeat) => {
@@ -453,11 +492,12 @@ fn parse_breed_sprite<'b>(breed_sprites: &mut String, breed: &BreedSymbol, index
     let color = HSV::new(ang as f32 * 180.0 / f32c::PI, 0.5, 0.9).to_rgb().to_inner();
 
     let escaped_name = escape_xml(&breed.ident.id);
-    write!(breed_sprites, r#"<sprite name="{name}" x="{x}" y="{y}" heading="{heading}" hidden="true" color="{color}" pen="middle" scale="0.5"><blocks></blocks><variables>"#,
+    write!(breed_sprites, r#"<sprite name="{name}" x="{x}" y="{y}" heading="{heading}" hidden="true" color="{color}" pen="middle" scale="{scale}"><blocks></blocks><variables>"#,
         name = escaped_name,
         x = ang.sin() * radius,
         y = ang.cos() * radius,
         heading = ang * 180.0 / f64c::PI,
+        scale = BASE_SPRITE_SCALE,
         color = Punctuated([color.0, color.1, color.2].iter(), ",")).unwrap();
     for var in breed.info.borrow().props.keys() {
         write!(breed_sprites, r#"<variable name="{}"><l>0</l></variable>"#, escape_xml(var)).unwrap();
@@ -553,6 +593,7 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
         patches_scale = stage_size / patches_dim,
         custom_blocks = custom_blocks,
         breed_sprites = breed_sprites,
+        base_sprite_scale = BASE_SPRITE_SCALE,
         variables = variables,
         patches_props = patches_props,
         plural_breed_names = escape_xml(&Punctuated(program.breeds.values().filter(|b| b.is_plural).map(|b| &b.ident.id), "\r").to_string()),

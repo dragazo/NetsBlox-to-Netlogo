@@ -189,6 +189,9 @@ impl Program {
                     "%n clones" | "%n new %s" | "%n new %s (ordered)" => return Err(Error::CreateOutsideOfTell),
 
                     "delete all clones" => Ok("clear-turtles".into()),
+                    "reset patches" => Ok("clear-patches".into()),
+                    "reset global variables" => Ok("clear-globals".into()),
+                    "reset everything" => Ok("clear-all".into()),
                     "random x position" => Ok("random-xcor".into()),
                     "random y position" => Ok("random-ycor".into()),
                     "move %n steps" => {
@@ -239,6 +242,23 @@ impl Program {
                             Ok(format!("ask {} [\n{}\n]", target, indent(&action)))
                         }
                     }
+                    "set pen color to %l" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidProject); }
+                        let color = self.parse_script_recursive(&script.children[0])?;
+                        Ok(format!("set color {}", color))
+                    }
+                    "setColor" => {
+                        let vals: Vec<_> = surely(script.get(&["color"]))?.text.split(',').collect();
+                        if vals.len() != 3 && vals.len() != 4 { return Err(Error::InvalidProject); }
+                        Ok(format!("set color (list {} {} {})", vals[0], vals[1], vals[2]))
+                    } 
+                    "pen color" => Ok("color".into()),
+                    "set scale to %n x" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidProject); }
+                        let scale = self.parse_script_recursive(&script.children[0])?;
+                        Ok(format!("set size {}", scale))
+                    }
+                    "scale" => Ok("size".into()),
 
                     "removeClone" => Ok("die".into()),
                     "xPosition" => Ok("xcor".into()),
