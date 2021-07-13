@@ -49,7 +49,9 @@ Stmt: Stmt = {
     Ident => Stmt::FnCall(FnCall { name: <>, args: vec![] }),
     VarDecl => Stmt::VarDecl(<>),
     Assign => Stmt::Assign(<>),
+    Loop => Stmt::Loop(<>),
     Repeat => Stmt::Repeat(<>),
+    While => Stmt::While(<>),
     Create => Stmt::Create(<>),
     Ask => Stmt::Ask(<>),
     Hatch => Stmt::Hatch(<>),
@@ -62,7 +64,9 @@ IfElse: IfElse = {
 };
 VarDecl: VarDecl = <l:@L> "let" <name:Ident> <value:Expr> => VarDecl { name, value, lspan: l };
 Assign: Assign = <l:@L> "set" <name:Ident> <value:Expr> => Assign { name, value, lspan: l };
+Loop: Loop = <l:@L> "loop" "[" <stmts:Stmt*> "]" <r:@R> => Loop { stmts, raw_span: Span(l, r) };
 Repeat: Repeat = <l:@L> "repeat" <count:Expr> "[" <stmts:Stmt*> "]" <r:@R> => Repeat { count, stmts, raw_span: Span(l, r) };
+While: While = <l:@L> "while" <condition:Expr> "[" <stmts:Stmt*> "]" <r:@R> => While { condition, stmts, raw_span: Span(l, r) };
 Create: Create = <l:@L> <h:CreateHelper> <count:Expr> "[" <stmts:Stmt*> "]" <r:@R> => {
     Create { breed_plural: h.0, ordered: h.1, count, stmts, raw_span: Span(l, r) }
 };

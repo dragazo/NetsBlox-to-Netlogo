@@ -30,6 +30,7 @@
             </stage>
             <hidden>
 &#xD;&#xD; bounceOffEdge doGlide doGotoObject changeXPosition setXPosition changeYPosition setYPosition xPosition yPosition forward doFaceTowards gotoXY &#xD;&#xD;
+&#xD;&#xD; doFor receiveGo receiveKey receiveInteraction receiveCondition receiveMessage doBroadcast doBroadcastAndWait doSend getLastMessage doWarp doWait doWaitUntil doRun fork evaluate doTellTo reportAskFor doCallCC reportCallCC receiveOnClone createClone newClone doPauseAll doStopThis &#xD;&#xD;
             </hidden>
             <variables>
 <variable name="ticks"><l>0</l></variable>

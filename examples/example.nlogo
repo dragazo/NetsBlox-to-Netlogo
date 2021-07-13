@@ -87,6 +87,11 @@ to do-something
     let fun's-time 0 ; just testing weird variable names
     set fun's-time fun's-time + 3
 end
+to overflow
+    let v 0
+    while v < 10 [ set v v + 1 ]
+    loop [ set v v + 1 ]
+end
 @#$#@#$#@
 GRAPHICS-WINDOW
 210

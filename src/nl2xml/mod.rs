@@ -398,10 +398,24 @@ impl<'a> Program<'a> {
                         }
                     }
                 }
+                Stmt::Loop(repeat) => {
+                    *script += r#"<block s="doForever"><script>"#;
+                    self.generate_script(script, scopes, &repeat.stmts, func)?;
+                    *script += "</script></block>";
+
+                    has_terminated = true;
+                }
                 Stmt::Repeat(repeat) => {
                     *script += r#"<block s="doRepeat">"#;
                     self.generate_expr_script(script, scopes, &repeat.count)?;
                     *script += "<script>";
+                    self.generate_script(script, scopes, &repeat.stmts, func)?;
+                    *script += "</script></block>";
+                }
+                Stmt::While(repeat) => {
+                    *script += r#"<block s="doUntil"><block s="reportNot">"#;
+                    self.generate_expr_script(script, scopes, &repeat.condition)?;
+                    *script += "</block><script>";
                     self.generate_script(script, scopes, &repeat.stmts, func)?;
                     *script += "</script></block>";
                 }

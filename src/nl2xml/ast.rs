@@ -82,7 +82,9 @@ pub enum Stmt {
     FnCall(FnCall),
     VarDecl(VarDecl),
     Assign(Assign),
+    Loop(Loop),
     Repeat(Repeat),
+    While(While),
     Create(Create),
     Ask(Ask),
     Hatch(Hatch),
@@ -95,7 +97,9 @@ impl Spanned for Stmt {
             Stmt::FnCall(x) => x.span(),
             Stmt::VarDecl(x) => x.span(),
             Stmt::Assign(x) => x.span(),
+            Stmt::Loop(x) => x.span(),
             Stmt::Repeat(x) => x.span(),
+            Stmt::While(x) => x.span(),
             Stmt::Create(x) => x.span(),
             Stmt::Ask(x) => x.span(),
             Stmt::Hatch(x) => x.span(),
@@ -107,12 +111,14 @@ impl Spanned for Stmt {
 #[derive(Debug, Clone)] pub struct IfElse { pub condition: Expr, pub then: Vec<Stmt>, pub otherwise: Option<Vec<Stmt>>, pub raw_span: Span }
 #[derive(Debug, Clone)] pub struct VarDecl { pub name: Ident, pub value: Expr, pub lspan: usize }
 #[derive(Debug, Clone)] pub struct Assign { pub name: Ident, pub value: Expr, pub lspan: usize }
+#[derive(Debug, Clone)] pub struct Loop { pub stmts: Vec<Stmt>, pub raw_span: Span }
 #[derive(Debug, Clone)] pub struct Repeat { pub count: Expr, pub stmts: Vec<Stmt>, pub raw_span: Span }
+#[derive(Debug, Clone)] pub struct While { pub condition: Expr, pub stmts: Vec<Stmt>, pub raw_span: Span }
 #[derive(Debug, Clone)] pub struct Create { pub breed_plural: Ident, pub ordered: bool, pub count: Expr, pub stmts: Vec<Stmt>, pub raw_span: Span }
 #[derive(Debug, Clone)] pub struct Ask { pub agents: Expr, pub stmts: Vec<Stmt>, pub raw_span: Span }
 #[derive(Debug, Clone)] pub struct Hatch { pub count: Expr, pub stmts: Vec<Stmt>, pub raw_span: Span }
 
-raw_span_impl! { IfElse, Repeat, Create, Ask, Hatch }
+raw_span_impl! { IfElse, Loop, Repeat, While, Create, Ask, Hatch }
 impl Spanned for Report { fn span(&self) -> Span { Span(self.lspan, self.value.span().1) } }
 impl Spanned for VarDecl { fn span(&self) -> Span { Span(self.lspan, self.value.span().1) } }
 impl Spanned for Assign { fn span(&self) -> Span { Span(self.lspan, self.value.span().1) } }
