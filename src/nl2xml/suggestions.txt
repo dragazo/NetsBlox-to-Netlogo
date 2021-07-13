@@ -1,2 +1,4 @@
 # this is a key value suggestions map for undefined function errors
 any any?
+empty empty?
+atan2 atan

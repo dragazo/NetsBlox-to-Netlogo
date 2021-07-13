@@ -7,6 +7,7 @@ script variable %'a' = %'value'
 is %'sprite' alive?
 pick random float %'max'
 pick random 0 up to %'val'
+atan x = %'x' y = %'y'
 
 color %'name'
 set pen color to %'color'
@@ -32,8 +33,18 @@ change patch %'name' by %'value'
 get patch %'name'
 
 move %'count' steps
+go to x: %'x' y: %'y'
+change x by %'val'
+set x to %'val'
+change y by %'val'
+set y to %'val'
+x position
+y position
 random x position
 random y position
+
+turtle set %'items'
+is %'set' empty? (turtle set)
 
 setup patches
 update background

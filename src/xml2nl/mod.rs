@@ -194,11 +194,6 @@ impl Program {
                     "reset everything" => Ok("clear-all".into()),
                     "random x position" => Ok("random-xcor".into()),
                     "random y position" => Ok("random-ycor".into()),
-                    "move %n steps" => {
-                        if script.children.len() != 1 { return Err(Error::InvalidProject); }
-                        let dist = self.parse_script_recursive(&script.children[0])?;
-                        Ok(format!("(fd {})", dist))
-                    }
                     "pick random 0 up to %n" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         let max = self.parse_script_recursive(&script.children[0])?;
@@ -261,8 +256,8 @@ impl Program {
                     "scale" => Ok("size".into()),
 
                     "removeClone" => Ok("die".into()),
-                    "xPosition" => Ok("xcor".into()),
-                    "yPosition" => Ok("ycor".into()),
+                    "xPosition" | "x position" => Ok("xcor".into()),
+                    "yPosition" | "y position" => Ok("ycor".into()),
                     "direction" => Ok("heading".into()),
                     "reportMouseDown" => Ok("mouse-down?".into()),
                     "reportMouseX" => Ok("mouse-xcor".into()),
@@ -381,7 +376,7 @@ impl Program {
                             }
                         }
                     }
-                    "forward" => {
+                    "forward" | "move %n steps" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         let dist = self.parse_script_recursive(&script.children[0])?;
                         Ok(format!("(fd {})", dist))
@@ -396,28 +391,28 @@ impl Program {
                         let ang = self.parse_script_recursive(&script.children[0])?;
                         Ok(format!("(lt {})", ang))
                     }
-                    "gotoXY" => {
+                    "gotoXY" | "go to x: %n y: %n" => {
                         if script.children.len() != 2 { return Err(Error::InvalidProject); }
                         let x = self.parse_script_recursive(&script.children[0])?;
                         let y = self.parse_script_recursive(&script.children[1])?;
                         Ok(format!("(setxy {} {})", x, y))
                     }
-                    "changeXPosition" => {
+                    "changeXPosition" | "change x by %n" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         let delta = self.parse_script_recursive(&script.children[0])?;
                         Ok(format!("set xcor (xcor + {})", delta))
                     }
-                    "setXPosition" => {
+                    "setXPosition" | "set x to %n" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         let val = self.parse_script_recursive(&script.children[0])?;
                         Ok(format!("set xcor {}", val))
                     }
-                    "changeYPosition" => {
+                    "changeYPosition" | "change y by %n" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         let delta = self.parse_script_recursive(&script.children[0])?;
                         Ok(format!("set ycor (ycor + {})", delta))
                     }
-                    "setYPosition" => {
+                    "setYPosition" | "set y to %n" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         let val = self.parse_script_recursive(&script.children[0])?;
                         Ok(format!("set ycor {}", val))
@@ -432,6 +427,19 @@ impl Program {
                         res.push(')');
                         Ok(res)
                     }
+                    "turtle set %mult%obj" => {
+                        let list = surely(script.get(&["list"]))?;
+                        match list.children.len() {
+                            0 => Ok("no-turtles".into()),
+                            _ => {
+                                let mut items = Vec::with_capacity(list.children.len());
+                                for item in list.children.iter() {
+                                    items.push(self.parse_script_recursive(item)?);
+                                }
+                                Ok(format!("(turtle-set {})", Punctuated(items.iter(), " ")))
+                            }
+                        }
+                    }
                     "reportNumbers" => {
                         if script.children.len() != 2 { return Err(Error::InvalidProject); }
                         let low = self.parse_script_recursive(&script.children[0])?;
@@ -442,6 +450,11 @@ impl Program {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         let src = self.parse_script_recursive(&script.children[0])?;
                         Ok(format!("(empty? {})", src))
+                    }
+                    "is %l empty? (turtle set)" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidProject); }
+                        let src = self.parse_script_recursive(&script.children[0])?;
+                        Ok(format!("(not (any? {}))", src))
                     }
                     "doIfElse" => {
                         if script.children.len() != 3 { return Err(Error::InvalidProject); }
@@ -482,6 +495,12 @@ impl Program {
                             "id" => arg,
                             _ => return Err(Error::UnknownBlockType(format!("monadic <{}>", op))),
                         })
+                    }
+                    "atan x = %n y = %n" => {
+                        if script.children.len() != 2 { return Err(Error::InvalidProject); }
+                        let x = self.parse_script_recursive(&script.children[0])?;
+                        let y = self.parse_script_recursive(&script.children[1])?;
+                        Ok(format!("(atan {} {})", x, y))
                     }
                     "reportListItem" | "reportLetter" => {
                         if script.children.len() != 2 { return Err(Error::InvalidProject); }

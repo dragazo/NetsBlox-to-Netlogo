@@ -146,6 +146,8 @@ impl<'a> Program<'a> {
         Ok(match id {
             "heading" => StorageLocation::Builtin { get: r#"<block s="direction"></block>"#, set: Some((r#"<block s="setHeading">"#, "</block>")) },
             "size" => StorageLocation::Builtin { get: r#"<custom-block s="scale"></custom-block>"#, set: Some((r#"<custom-block s="set scale to %n x">"#, "</custom-block>")) },
+            "xcor" => StorageLocation::Builtin { get: r#"<custom-block s="x position"></custom-block>"#, set: Some((r#"<custom-block s="set x to %n">"#, "</custom-block>")) },
+            "ycor" => StorageLocation::Builtin { get: r#"<custom-block s="y position"></custom-block>"#, set: Some((r#"<custom-block s="set y to %n">"#, "</custom-block>")) },
             "color" => StorageLocation::BuiltinColor,
             _ => return Err(Error::VariableNoTDefined { name: ident.clone() }),
         })
@@ -222,6 +224,13 @@ impl<'a> Program<'a> {
                 self.generate_expr_script(script, scopes, &call.args[0])?;
                 *script += "</block>";
             }
+            "setxy" => {
+                check_usage(call, None, false, in_expr, Some(2))?;
+                *script += r#"<custom-block s="go to x: %n y: %n">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                self.generate_expr_script(script, scopes, &call.args[1])?;
+                *script += "</custom-block>";
+            }
             "random" => {
                 check_usage(call, None, true, in_expr, Some(1))?;
                 *script += r#"<custom-block s="pick random 0 up to %n">"#;
@@ -234,12 +243,18 @@ impl<'a> Program<'a> {
                 self.generate_expr_script(script, scopes, &call.args[0])?;
                 *script += "</custom-block>";
             }
-            "setxy" => {
-                check_usage(call, None, false, in_expr, Some(2))?;
-                *script += r#"<block s="gotoXY">"#;
+            "atan" => {
+                check_usage(call, None, true, in_expr, Some(2))?;
+                *script += r#"<custom-block s="atan x = %n y = %n">"#;
                 self.generate_expr_script(script, scopes, &call.args[0])?;
                 self.generate_expr_script(script, scopes, &call.args[1])?;
-                *script += "</block>";
+                *script += "</custom-block>";
+            }
+            "any?" => {
+                check_usage(call, None, true, in_expr, Some(1))?;
+                *script += r#"<block s="reportNot"><custom-block s="is %l empty? (turtle set)">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</custom-block></block>";
             }
             x => match self.funcs.get(x) {
                 None => return Err(Error::FunctionNotDefined { name: call.name.clone(), suggested: SUGGESTIONS.get(x).copied() }),

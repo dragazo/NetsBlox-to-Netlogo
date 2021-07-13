@@ -16,17 +16,25 @@ to setup
     clear-turtles
     clear-patches
     clear-globals
-    reset-ticks
-    clear-ticks ; for netsblox purposes, this is identical to reset-ticks
     clear-all
+    clear-ticks ; for netsblox purposes, this is identical to reset-ticks
+    reset-ticks
 
     ask patches [
         set countdown (random 100)
         set pcolor (list (random 256) (random 256) (random 256))
         let v pcolor
+        let bb no-turtles
+        let bbb (any? bb)
+        let cc (atan 2.1 -1.7)
     ]
     create-ordered-birds 100 [
-        (fd 50) 
+        (fd 1)
+        let tre1 xcor
+        let tre2 ycor
+        set xcor 0
+        set ycor 0
+        (setxy 0 0)
         set energy 10
         set color red
         set color (list 123 32 12)
@@ -45,7 +53,7 @@ to go
     ]
     ask turtles [
         (rt 1)
-        (fd 5)
+        (fd 1)
         set pcolor brown
         set energy (energy - (random-float 1))
         if energy < 0 [
