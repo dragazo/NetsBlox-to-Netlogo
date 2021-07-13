@@ -353,26 +353,26 @@ impl<'a> Program<'a> {
                 }
                 Stmt::Create(create) => {
                     self.ensure_breed_defined(&create.breed_plural, Some(true))?;
-                    *script += r#"<custom-block s="tell %l to %cmdRing">"#;
+                    *script += r#"<custom-block s="tell %l to %cs">"#;
                     *script += if create.ordered { r#"<custom-block s="%n new %s (ordered)">"# } else { r#"<custom-block s="%n new %s">"# };
                     self.generate_expr_script(script, scopes, &create.count)?;
-                    write!(script, r#"<l>{}</l></custom-block><block s="reifyScript"><script>"#, escape_xml(&create.breed_plural.id)).unwrap();
+                    write!(script, r#"<l>{}</l></custom-block><script>"#, escape_xml(&create.breed_plural.id)).unwrap();
                     self.generate_script(script, scopes, &create.stmts, func)?;
-                    *script += "</script><list></list></block></custom-block>";
+                    *script += "</script></custom-block>";
                 }
                 Stmt::Ask(ask) => {
-                    *script += r#"<custom-block s="tell %l to %cmdRing">"#;
+                    *script += r#"<custom-block s="tell %l to %cs">"#;
                     self.generate_expr_script(script, scopes, &ask.agents)?;
-                    *script += r#"<block s="reifyScript"><script>"#;
+                    *script += r#"<script>"#;
                     self.generate_script(script, scopes, &ask.stmts, func)?;
-                    *script += "</script><list></list></block></custom-block>";
+                    *script += "</script></custom-block>";
                 }
                 Stmt::Hatch(hatch) => {
-                    *script += r#"<custom-block s="tell %l to %cmdRing"><custom-block s="%n clones">"#;
+                    *script += r#"<custom-block s="tell %l to %cs"><custom-block s="%n clones">"#;
                     self.generate_expr_script(script, scopes, &hatch.count)?;
-                    *script += r#"</custom-block><block s="reifyScript"><script>"#;
+                    *script += r#"</custom-block><script>"#;
                     self.generate_script(script, scopes, &hatch.stmts, func)?;
-                    *script += "</script><list></list></block></custom-block>";
+                    *script += "</script></custom-block>";
                 }
             }
         }

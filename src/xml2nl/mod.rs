@@ -206,19 +206,10 @@ impl Program {
                         let max = self.parse_script_recursive(&script.children[0])?;
                         Ok(format!("(random-float {})", max))
                     }
-                    "tell %l to %cmdRing" => {
+                    "tell %l to %cs" => {
                         if script.children.len() != 2 { return Err(Error::InvalidProject); }
 
-                        let action = match script.children[1].name.as_str() {
-                            "block" => match surely(script.children[1].attr("s"))?.value.as_str() {
-                                "reifyScript" => {
-                                    let target = surely(script.children[1].get(&["script"]))?;
-                                    self.parse_script_recursive(target)?
-                                }
-                                _ => return Err(Error::NonConstantCodeBlock),
-                            }
-                            _ => return Err(Error::NonConstantCodeBlock),
-                        };
+                        let action = self.parse_script_recursive(&script.children[1])?;
 
                         let agents = &script.children[0];
                         let (is_create, is_ordered, is_hatch) = if agents.name != "custom-block" { (false, false, false) } else {
