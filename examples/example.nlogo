@@ -58,7 +58,10 @@ to go
         set energy (energy - (random-float 1))
         let dd (distancexy 0 0)
         let t (one-of turtles)
-        if t != nobody [ set dd (distance t) ]
+        if t != nobody [
+            set dd (distance t)
+            set dd [heading] of t + 1
+        ]
         if energy < 0 [
             ifelse (random-float 1) < 0.1 [ die ] [
                 ifelse (random-float 1) < 0.01 [

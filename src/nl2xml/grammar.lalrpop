@@ -126,6 +126,7 @@ Atom: Expr = {
     Value => Expr::Value(<>),
     FnCall => Expr::FnCall(<>),
     "(" <Expr> ")" => <>,
+    <l:@L> "[" <expr:Expr> "]" "of" <target:Atom> => Expr::Fetch { target: Box::new(target), expr: Box::new(expr), lspan: l },
 };
 
 FnCall: FnCall = "(" <name:Ident> <args:Expr+> ")" => FnCall { name, args };
@@ -140,7 +141,4 @@ Value: Value = {
 Ident: Ident = <l:@L> <v:r"[\p{alpha}.?=*!<>:#+/%_^'&-][\p{alpha}\p{digit}.?=*!<>:#+/%_^'&-]*"> <r:@R> => Ident { id: v.to_lowercase(), raw_span: Span(l, r) };
 Number: Number = <l:@L> <v:r"-?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?"> <r:@R> => Number { value: String::from(v), raw_span: Span(l, r) };
 Text: Text = <l:@L> <v:r#""(\\[\\nrt"']|[^\\"\r\n])*""#> <r:@R> => Text { content: clean_string(v), raw_span: Span(l, r) };
-List: List = {
-    <l:@L> "(" "list" <values:Expr*> ")" <r:@R> => List { values, raw_span: Span(l, r) },
-    <l:@L> "[" <values:Expr*> "]" <r:@R> => List { values, raw_span: Span(l, r) },
-};
+List: List = <l:@L> "(" "list" <values:Expr*> ")" <r:@R> => List { values, raw_span: Span(l, r) };

@@ -68,6 +68,9 @@ pub enum Error {
     UnknownBlockType(String),
     /// A general operator block contained a non-constant operator name, which is currently not supported.
     NonConstantOperator,
+
+    /// A ringified reporter was empty.
+    EmptyReportRing,
 }
 
 fn surely<T>(val: Option<T>) -> Result<T, Error> {
@@ -177,6 +180,11 @@ impl Program {
                 }
                 Ok(res.join("\n"))
             }
+            "autolambda" => {
+                if script.children.len() > 1 { return Err(Error::InvalidProject); }
+                if script.children.is_empty() { return Err(Error::EmptyReportRing); }
+                self.parse_script_recursive(&script.children[0])
+            }
             "block" | "custom-block" => match script.attr("s") {
                 None => {
                     if let Some(var) = script.attr("var") {
@@ -236,6 +244,16 @@ impl Program {
                             let target = self.parse_script_recursive(agents)?;
                             Ok(format!("ask {} [\n{}\n]", target, indent(&action)))
                         }
+                    }
+                    "ask %obj for its %repRing" => {
+                        if script.children.len() != 2 { return Err(Error::InvalidProject); }
+                        if script.children[1].name != "block" || surely(script.children[1].attr("s"))?.value != "reifyReporter" {
+                            return Err(Error::NonConstantCodeBlock);
+                        }
+                    
+                        let target = self.parse_script_recursive(&script.children[0])?;
+                        let action = self.parse_script_recursive(surely(script.children[1].get(&["autolambda"]))?)?;
+                        Ok(format!("[{}] of {}", action, target))
                     }
                     "set pen color to %l" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }

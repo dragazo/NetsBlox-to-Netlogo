@@ -443,6 +443,14 @@ impl<'a> Program<'a> {
             Expr::Not { val, .. } => { *script += r#"<block s="reportNot">"#; self.generate_expr_script(script, scopes, val)?; *script += "</block>"; }
             Expr::Neg { val, .. } => { *script += r#"<block s="reportMonadic"><l><option>neg</option></l>"#; self.generate_expr_script(script, scopes, val)?; *script += "</block>"; }
 
+            Expr::Fetch { target, expr, .. } => {
+                *script += r#"<custom-block s="ask %obj for its %repRing">"#;
+                self.generate_expr_script(script, scopes, target)?;
+                *script += r#"<block s="reifyReporter"><autolambda>"#;
+                self.generate_expr_script(script, scopes, expr)?;
+                *script += "</autolambda><list></list></block></custom-block>";
+            }
+
             Expr::FnCall(call) => self.format_func_call(script, scopes, call, true)?,
 
             Expr::Value(Value::Number(num)) => write!(script, "<l>{}</l>", escape_xml(&num.value)).unwrap(),

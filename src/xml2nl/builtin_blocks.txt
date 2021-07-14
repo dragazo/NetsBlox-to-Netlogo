@@ -20,6 +20,7 @@ scale
 %'count' new %'breed-name'
 %'count' new %'breed-name' (ordered)
 tell %'sprites' to %'action'
+ask %'sprite' for its %'val'
 
 delete all clones
 reset patches

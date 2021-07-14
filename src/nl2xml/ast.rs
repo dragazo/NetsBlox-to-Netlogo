@@ -151,6 +151,8 @@ pub enum Expr {
     Not { val: Box<Expr>, lspan: usize },
     Neg { val: Box<Expr>, lspan: usize },
 
+    Fetch { target: Box<Expr>, expr: Box<Expr>, lspan: usize },
+
     FnCall(FnCall),
     Value(Value),
 }
@@ -182,6 +184,8 @@ impl Spanned for Expr {
 
             Expr::Not { val, lspan } => Span(*lspan, val.span().1),
             Expr::Neg { val, lspan } => Span(*lspan, val.span().1),
+
+            Expr::Fetch { lspan, target, .. } => Span(*lspan, target.span().1),
 
             Expr::FnCall(x) => x.span(),
             Expr::Value(x) => x.span(),
@@ -334,7 +338,7 @@ pub fn parse(program: &str) -> Result<Vec<Item>, ParseError<usize, Token, &str>>
 #[test] fn test_vars() {
     let res = parse(r#"
     to go ;func with no args
-        let foo [1 -4 -5. -6.e2]
+        let foo (list 1 -4 -5. -6.e2)
         set foo -foo + 1
     end"#).unwrap();
     assert_eq!(res.len(), 1);
