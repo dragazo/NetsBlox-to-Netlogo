@@ -5,7 +5,7 @@ use linked_hash_map::LinkedHashMap;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::fmt::Write;
+use std::fmt::{self, Write, Debug, Display};
 use std::f32::consts as f32c;
 use std::f64::consts as f64c;
 use std::iter;
@@ -16,8 +16,8 @@ use ast::*;
 pub use ast::{Ident, Span};
 
 use lalrpop_util::{ParseError, lexer::Token};
-
 use xml::escape::escape_str_attribute as escape_xml;
+use ordslice::Ext;
 
 const BASE_SPRITE_SCALE: f64 = 0.5;
 
@@ -32,9 +32,9 @@ fn rename_patch_prop(prop: &str) -> &str {
     NL2NB_PATCH_PROP_RENAMES.get(prop).copied().unwrap_or(prop)
 }
 
-fn get_func_def_name<'b>(func: &Function) -> Result<String, Error<'b>> {
+fn get_func_def_name<'b>(func: &Function) -> Result<String, ErrorKind<'b>> {
     if let Some(bad) = iter::once(&func.name).chain(&func.params).find(|s| s.id.contains('\'')) {
-        return Err(Error::FuncHeaderHadApos { func: func.name.clone(), name: bad.clone() });
+        return Err(ErrorKind::FuncHeaderHadApos { func: func.name.clone(), name: bad.clone() });
     }
 
     let mut res = func.name.id.clone();
@@ -53,7 +53,7 @@ fn get_func_name(func: &Function) -> String {
 }
 
 #[derive(Debug)]
-pub enum Error<'a> {
+enum ErrorKind<'a> {
     Parse(ParseError<usize, Token<'a>, &'a str>),
     FuncHeaderHadApos { func: Ident, name: Ident },
 
@@ -79,9 +79,134 @@ pub enum Error<'a> {
 
     MissingRequiredFunc { name: &'static str, reports: bool, params: &'static [&'static str] },
 }
-impl<'a> From<ParseError<usize, Token<'a>, &'a str>> for Error<'a> {
+impl<'a> From<ParseError<usize, Token<'a>, &'a str>> for ErrorKind<'a> {
     fn from(e: ParseError<usize, Token<'a>, &'a str>) -> Self {
-        Error::Parse(e)
+        ErrorKind::Parse(e)
+    }
+}
+
+pub struct Error<'a> {
+    kind: ErrorKind<'a>,
+    src: &'a str,
+    line_starts: Vec<usize>, // sorted
+}
+impl Error<'_> {
+    fn get_line_num(&self, pos: usize) -> usize {
+        self.line_starts.upper_bound(&pos)
+    }
+    fn write_error(&self, f: &mut fmt::Formatter, msg: &str, span: Option<Span>, extra_msg: Option<&str>) -> fmt::Result {
+        writeln!(f, "{}", msg)?;
+        
+        if let Some(span) = span {
+            writeln!(f)?;
+
+            let start_index = self.line_starts.upper_bound(&span.0).saturating_sub(1);
+            let end_index = self.line_starts.lower_bound(&span.1);
+            
+            // grab all the referenced lines
+            let mut lines = Vec::with_capacity(end_index - start_index);
+            for i in start_index..end_index {
+                let a = self.line_starts[i];
+                let b = self.line_starts.get(i + 1).copied().unwrap_or(self.src.len());
+                let line = self.src[a..b].trim_end();
+                lines.push(if line.is_empty() { None } else { Some(line) });
+            }
+
+            // chop off any common leading space among the lines
+            let mut chop_len = 0;
+            while let Some(c) = lines.iter().flatten().filter_map(|s| s.chars().next()).next() {
+                if !c.is_whitespace() || !lines.iter().flatten().all(|s| s.starts_with(c)) { break }
+                let len = c.len_utf8();
+                for line in lines.iter_mut().flatten() {
+                    *line = &line[len..];
+                    chop_len += 1;
+                }
+            }
+
+            let pos_prefix = format!("line {}: ", start_index + 1);
+            let space_prefix = " ".repeat(pos_prefix.len());
+            
+            if !lines.is_empty() {
+                writeln!(f, "| {}{}", pos_prefix, lines[0].unwrap_or(""))?;
+                for line in &lines[1..] {
+                    writeln!(f, "| {}{}", space_prefix, line.unwrap_or(""))?;
+                }
+            }
+            if lines.len() == 1 {
+                let underline = "-".repeat(self.src[span.0..span.1].chars().count());
+                let prefix = " ".repeat(span.0 - self.line_starts[start_index] - chop_len + space_prefix.len());
+                writeln!(f, "  {}{}", prefix, underline)?;
+            }
+        }
+
+        if let Some(extra) = extra_msg { writeln!(f, "\n{}", extra)? }
+        
+        Ok(())
+    }
+}
+impl Debug for Error<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.kind)
+    }
+}
+impl Display for Error<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match &self.kind {
+            ErrorKind::Parse(e) => match e {
+                ParseError::InvalidToken { location } => self.write_error(f, "invalid token", Some(Span(*location, location + 1)), None)?,
+                ParseError::UnrecognizedEOF { location, .. } => self.write_error(f, "unexpected end of file", Some(Span(*location, location + 1)), None)?,
+                ParseError::UnrecognizedToken { token, .. } => self.write_error(f, "unexpected token", Some(Span(token.0, token.2)), None)?,
+                ParseError::ExtraToken { token } => self.write_error(f, "found extra token", Some(Span(token.0, token.2)), None)?,
+                ParseError::User { .. } => unreachable!(),
+            }
+            ErrorKind::FuncHeaderHadApos { name, .. } => self.write_error(f, &format!("function header had invalid symbol: {}", name.id), Some(name.span()), Some("function names and parameters may not contain apostrophes"))?,
+            
+            ErrorKind::Redefine { name, previous } => self.write_error(f, &format!("redefined symbol: {}", name.id), Some(name.span()), Some(&format!("previously defined on line {}", self.get_line_num(previous.span().0))))?,
+            ErrorKind::RedefineBuiltin { name } => self.write_error(f, &format!("redefined symbol: {}", name.id), Some(name.span()), Some("this is a built-in or reserved name"))?,
+
+            ErrorKind::ExpectedSingular { name } => self.write_error(f, &format!("expected singular breed name, got: {}", name.id), Some(name.span()), None)?,
+            ErrorKind::ExpectedPlural { name } => self.write_error(f, &format!("expected plural breed name, got: {}", name.id), Some(name.span()), None)?,
+            ErrorKind::BreedNotDefined { name } => self.write_error(f, &format!("breed does not exist: {}", name.id), Some(name.span()), Some("you can define breeds with 'breed [ plural singular ]'"))?,
+            ErrorKind::VariableNoTDefined { name } => self.write_error(f, &format!("undefined variable: {}", name.id), Some(name.span()), Some("if this was meant to be a netlogo gui input, these are not currently supported"))?,
+            ErrorKind::FunctionNotDefined { name, suggested } => {
+                let m = if let Some(s) = suggested { Some(format!("suggestion: {}", s)) } else { None };
+                self.write_error(f, &format!("undefined function: {}", name.id), Some(name.span()), m.as_ref().map(|s| s.as_str()))?
+            }
+
+            ErrorKind::AssignToReadonlyVar { name } => self.write_error(f, &format!("assign to readonly variable: {}", name.id), Some(name.span()), None)?,
+
+            ErrorKind::InvalidColor { color_span } => self.write_error(f, "invalid color", Some(*color_span), Some("custom colors must be a list of three numbers denoting rbg"))?,
+
+            ErrorKind::FunctionArgCount { func, invoke_span, got, expected, is_builtin } => {
+                let m = match is_builtin {
+                    false => format!("{} (defined on line {}) expected {} {}, but got {}", func.id, self.get_line_num(func.span().0), expected, if *expected == 1 { "argument" } else { "arguments" }, got),
+                    true => format!("{} (built-in) expected {} arguments, but got {}", func.id, expected, got),
+                };
+                self.write_error(f, "incorrect number of arguments", Some(*invoke_span), Some(&m))?
+            }
+            ErrorKind::NonReporterInExpr { func, invoke_span, is_builtin } => {
+                let m = match is_builtin {
+                    false => format!("{} (defined on line {}) does not report a value", func.id, self.get_line_num(func.span().0)),
+                    true => format!("{} (built-in) does not report a value", func.id),
+                };
+                self.write_error(f, "non-reporter used in expression", Some(*invoke_span), Some(&m))?
+            }
+            ErrorKind::ReporterValueDiscarded { func, invoke_span, is_builtin } => {
+                let m = match is_builtin {
+                    false => format!("{} (defined on line {}) reports a value, but the result is discarded", func.id, self.get_line_num(func.span().0)),
+                    true => format!("{} (built-in) reports a value, but the result is discarded", func.id),
+                };
+                self.write_error(f, "reporter value discarded", Some(*invoke_span), Some(&m))?
+            }
+
+            ErrorKind::ReportInNonReporter { report_span, .. } => self.write_error(f, "report statement in non-reporter", Some(*report_span), Some("the enclosing function does not report a value.\ndid you mean to use 'to-report' instead of 'to'?"))?,
+            ErrorKind::UnreachableCode { unreachable_span, .. } => self.write_error(f, "unreachable code", Some(*unreachable_span), Some("a previous instruction already exited the function or started an infinite loop"))?,
+
+            ErrorKind::MissingRequiredFunc { name, reports, params } => {
+                self.write_error(f, "missing required function", None, Some(&format!("expected a function with signature '{} {} [ {} ] end", if *reports { "to-report" } else { "to" }, name, Punctuated(params.iter(), " "))))?
+            }
+        }
+        Ok(())
     }
 }
 
@@ -109,7 +234,7 @@ pub struct Program<'a> {
 }
 impl<'a> Program<'a> {
     // checks for validity in (only) the global scope
-    fn validate_define_global<'b>(&self, ident: &Ident) -> Result<(), Error<'b>> {
+    fn validate_define_global<'b>(&self, ident: &Ident) -> Result<(), ErrorKind<'b>> {
         let id = ident.id.as_str();
         let prev = self.globals.get(id).map(|s| s.ident)
             .or(self.breeds.get(id).map(|s| s.ident))
@@ -117,22 +242,22 @@ impl<'a> Program<'a> {
             .or(self.patches.props.get(id).copied())
             .or(self.all_breed_props.get(id).copied());
         if let Some(prev) = prev {
-            return Err(Error::Redefine { name: ident.clone(), previous: prev.clone() });
+            return Err(ErrorKind::Redefine { name: ident.clone(), previous: prev.clone() });
         }
         if RESERVED_WORDS.contains(id) {
-            return Err(Error::RedefineBuiltin { name: ident.clone() });
+            return Err(ErrorKind::RedefineBuiltin { name: ident.clone() });
         }
         Ok(())
     }
-    fn validate_define_lexical<'b>(&self, ident: &Ident, scopes: &[LinkedHashMap<&str, &Ident>]) -> Result<(), Error<'b>> {
+    fn validate_define_lexical<'b>(&self, ident: &Ident, scopes: &[LinkedHashMap<&str, &Ident>]) -> Result<(), ErrorKind<'b>> {
         for scope in scopes.iter().rev() {
             if let Some(&prev) = scope.get(ident.id.as_str()) {
-                return Err(Error::Redefine { name: ident.clone(), previous: prev.clone() });
+                return Err(ErrorKind::Redefine { name: ident.clone(), previous: prev.clone() });
             }
         }
         self.validate_define_global(ident)
     }
-    fn find_var<'b>(&self, scopes: &[LinkedHashMap<&str, &Ident>], ident: &Ident) -> Result<StorageLocation, Error<'b>> {
+    fn find_var<'b>(&self, scopes: &[LinkedHashMap<&str, &Ident>], ident: &Ident) -> Result<StorageLocation, ErrorKind<'b>> {
         let id = ident.id.as_str();
         for scope in scopes.iter().rev() {
             if scope.contains_key(id) { return Ok(StorageLocation::Lexical) }
@@ -149,25 +274,25 @@ impl<'a> Program<'a> {
             "xcor" => StorageLocation::Builtin { get: r#"<custom-block s="x position"></custom-block>"#, set: Some((r#"<custom-block s="set x to %n">"#, "</custom-block>")) },
             "ycor" => StorageLocation::Builtin { get: r#"<custom-block s="y position"></custom-block>"#, set: Some((r#"<custom-block s="set y to %n">"#, "</custom-block>")) },
             "color" => StorageLocation::BuiltinColor,
-            _ => return Err(Error::VariableNoTDefined { name: ident.clone() }),
+            _ => return Err(ErrorKind::VariableNoTDefined { name: ident.clone() }),
         })
     }
-    fn ensure_breed_defined<'b>(&self, ident: &Ident, should_be_plural: Option<bool>) -> Result<(), Error<'b>> {
+    fn ensure_breed_defined<'b>(&self, ident: &Ident, should_be_plural: Option<bool>) -> Result<(), ErrorKind<'b>> {
         let breed = match self.breeds.get(ident.id.as_str()) {
-            None => return Err(Error::BreedNotDefined { name: ident.clone() }),
+            None => return Err(ErrorKind::BreedNotDefined { name: ident.clone() }),
             Some(b) => b,
         };
         if let Some(should_be_plural) = should_be_plural {
             match (breed.is_plural, should_be_plural) {
                 (true, true) | (false, false) => (),
-                (true, false) => return Err(Error::ExpectedSingular { name: ident.clone() }),
-                (false, true) => return Err(Error::ExpectedPlural { name: ident.clone() }),
+                (true, false) => return Err(ErrorKind::ExpectedSingular { name: ident.clone() }),
+                (false, true) => return Err(ErrorKind::ExpectedPlural { name: ident.clone() }),
             }
         }
         Ok(())
     }
-    fn format_func_call<'b>(&self, script: &mut String, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, call: &FnCall, in_expr: bool) -> Result<(), Error<'b>> {
-        fn check_usage<'b>(call: &FnCall, func: Option<&Function>, reports: bool, in_expr: bool, expected_args: Option<usize>) -> Result<(), Error<'b>> {
+    fn format_func_call<'b>(&self, script: &mut String, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, call: &FnCall, in_expr: bool) -> Result<(), ErrorKind<'b>> {
+        fn check_usage<'b>(call: &FnCall, func: Option<&Function>, reports: bool, in_expr: bool, expected_args: Option<usize>) -> Result<(), ErrorKind<'b>> {
             debug_assert!(func.is_none() || func.unwrap().reports == reports);
             debug_assert!(func.is_none() || expected_args.is_none() || func.unwrap().params.len() == expected_args.unwrap());
             let target = func.map(|f| &f.name).unwrap_or(&call.name);
@@ -175,11 +300,11 @@ impl<'a> Program<'a> {
 
             match (reports, in_expr) {
                 (true, true) | (false, false) => (),
-                (true, false) => return Err(Error::ReporterValueDiscarded { func: target.clone(), invoke_span: call.span(), is_builtin }),
-                (false, true) => return Err(Error::NonReporterInExpr { func: target.clone(), invoke_span: call.span(), is_builtin }),
+                (true, false) => return Err(ErrorKind::ReporterValueDiscarded { func: target.clone(), invoke_span: call.span(), is_builtin }),
+                (false, true) => return Err(ErrorKind::NonReporterInExpr { func: target.clone(), invoke_span: call.span(), is_builtin }),
             }
             if let Some(expected) = expected_args {
-                if call.args.len() != expected { return Err(Error::FunctionArgCount { func: target.clone(), invoke_span: call.span(), got: call.args.len(), expected, is_builtin }) }
+                if call.args.len() != expected { return Err(ErrorKind::FunctionArgCount { func: target.clone(), invoke_span: call.span(), got: call.args.len(), expected, is_builtin }) }
             }
             Ok(())
         }
@@ -276,7 +401,7 @@ impl<'a> Program<'a> {
                 *script += "</custom-block>";
             }
             x => match self.funcs.get(x) {
-                None => return Err(Error::FunctionNotDefined { name: call.name.clone(), suggested: SUGGESTIONS.get(x).copied() }),
+                None => return Err(ErrorKind::FunctionNotDefined { name: call.name.clone(), suggested: SUGGESTIONS.get(x).copied() }),
                 Some(func) => {
                     check_usage(call, Some(func), func.reports, in_expr, Some(func.params.len()))?;
 
@@ -290,7 +415,7 @@ impl<'a> Program<'a> {
         }
         Ok(())
     }
-    fn generate_expr_script<'b>(&self, script: &mut String, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, expr: &Expr) -> Result<(), Error<'b>> {
+    fn generate_expr_script<'b>(&self, script: &mut String, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, expr: &Expr) -> Result<(), ErrorKind<'b>> {
         match expr {
             Expr::Choice { condition, a, b, .. } => { *script += r#"<block s="reportIfElse">"#; self.generate_expr_script(script, scopes, condition)?; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>" }
 
@@ -341,16 +466,16 @@ impl<'a> Program<'a> {
         }
         Ok(())
     }
-    fn generate_script<'b>(&self, script: &mut String, scopes: &mut Vec<LinkedHashMap<&'a str, &'a Ident>>, stmts: &'a [Stmt], func: &Function) -> Result<(), Error<'b>> {
+    fn generate_script<'b>(&self, script: &mut String, scopes: &mut Vec<LinkedHashMap<&'a str, &'a Ident>>, stmts: &'a [Stmt], func: &Function) -> Result<(), ErrorKind<'b>> {
         scopes.push(Default::default()); // generate a new scope for this script
 
         let mut has_terminated = false;
 
         for stmt in stmts {
-            if has_terminated { return Err(Error::UnreachableCode { func: func.name.clone(), unreachable_span: stmt.span() }) }
+            if has_terminated { return Err(ErrorKind::UnreachableCode { func: func.name.clone(), unreachable_span: stmt.span() }) }
             match stmt {
                 Stmt::Report(report) => {
-                    if !func.reports { return Err(Error::ReportInNonReporter { func: func.name.clone(), report_span: report.span() }) }
+                    if !func.reports { return Err(ErrorKind::ReportInNonReporter { func: func.name.clone(), report_span: report.span() }) }
 
                     *script += r#"<block s="doReport">"#;
                     self.generate_expr_script(script, scopes, &report.value)?;
@@ -396,7 +521,7 @@ impl<'a> Program<'a> {
                             self.generate_expr_script(script, scopes, &assign.value)?;
                             *script += set.1;
                         }
-                        None => return Err(Error::AssignToReadonlyVar { name: assign.name.clone() }),
+                        None => return Err(ErrorKind::AssignToReadonlyVar { name: assign.name.clone() }),
                     }
                     StorageLocation::BuiltinColor => {
                         let is_general = match &assign.value {
@@ -406,7 +531,7 @@ impl<'a> Program<'a> {
                                     false
                                 }
                                 [_, _, _] => true,
-                                _ => return Err(Error::InvalidColor { color_span: assign.value.span() }), // not three values
+                                _ => return Err(ErrorKind::InvalidColor { color_span: assign.value.span() }), // not three values
                             }
                             _ => true,
                         };
@@ -467,7 +592,7 @@ impl<'a> Program<'a> {
         scopes.pop(); // remove the scope we created
         Ok(())
     }
-    fn init_global<'b>(items: &[Item]) -> Result<Program, Error<'b>> {
+    fn init_global<'b>(items: &[Item]) -> Result<Program, ErrorKind<'b>> {
         let mut program = Program::default();
         let mut owns: Vec<&Own> = Vec::with_capacity(16);
 
@@ -497,10 +622,10 @@ impl<'a> Program<'a> {
         }
         // process all the own drectives we stored
         for own in owns {
-            fn add_props<'a, 'b>(target: &mut BTreeMap<&'a str, &'a Ident>, props: &'a [Ident]) -> Result<(), Error<'b>> {
+            fn add_props<'a, 'b>(target: &mut BTreeMap<&'a str, &'a Ident>, props: &'a [Ident]) -> Result<(), ErrorKind<'b>> {
                 for prop in props {
                     if let Some(prev) = target.insert(&prop.id, prop) {
-                        return Err(Error::Redefine { name: prop.clone(), previous: prev.clone() })
+                        return Err(ErrorKind::Redefine { name: prop.clone(), previous: prev.clone() })
                     }
                 }
                 Ok(())
@@ -514,11 +639,11 @@ impl<'a> Program<'a> {
                     add_props(&mut target.info.borrow_mut().props, &own.props)?;
                 },
                 "patches" => add_props(&mut program.patches.props, &own.props)?,
-                "turtle" | "patch" => return Err(Error::ExpectedPlural { name: own.plural_owner.clone() }),
+                "turtle" | "patch" => return Err(ErrorKind::ExpectedPlural { name: own.plural_owner.clone() }),
                 x => match program.breeds.get(x) {
-                    None => return Err(Error::BreedNotDefined { name: own.plural_owner.clone() }),
+                    None => return Err(ErrorKind::BreedNotDefined { name: own.plural_owner.clone() }),
                     Some(target) => {
-                        if !target.is_plural { return Err(Error::ExpectedPlural { name: own.plural_owner.clone() }) }
+                        if !target.is_plural { return Err(ErrorKind::ExpectedPlural { name: own.plural_owner.clone() }) }
                         add_props(&mut target.info.borrow_mut().props, &own.props)?;
                     }
                 }
@@ -533,7 +658,7 @@ impl<'a> Program<'a> {
     }
 }
 
-fn parse_breed_sprite<'b>(breed_sprites: &mut String, breed: &BreedSymbol, index: (usize, usize)) -> Result<(), Error<'b>> {
+fn parse_breed_sprite<'b>(breed_sprites: &mut String, breed: &BreedSymbol, index: (usize, usize)) -> Result<(), ErrorKind<'b>> {
     assert!(breed.is_plural);
     let ang = 2.0 * f64c::PI * (index.0 as f64 / index.1 as f64);
     let radius = if index.1 >= 2 { 100.0 } else { 0.0 };
@@ -559,7 +684,7 @@ fn parse_breed_sprite<'b>(breed_sprites: &mut String, breed: &BreedSymbol, index
 
     Ok(())
 }
-fn parse_function<'a, 'b>(custom_blocks: &mut String, program: &Program<'a>, scopes: &mut Vec<LinkedHashMap<&'a str, &'a Ident>>, func: &'a Function) -> Result<(), Error<'b>> {
+fn parse_function<'a, 'b>(custom_blocks: &mut String, program: &Program<'a>, scopes: &mut Vec<LinkedHashMap<&'a str, &'a Ident>>, func: &'a Function) -> Result<(), ErrorKind<'b>> {
     assert_eq!(scopes.len(), 1); // should just have the global scope
     scopes.push(Default::default()); // add a new scope for the function parameters
 
@@ -582,15 +707,15 @@ fn parse_function<'a, 'b>(custom_blocks: &mut String, program: &Program<'a>, sco
     scopes.pop(); // remove the scope we added
     Ok(())
 }
-fn ensure_has_required_func<'b>(program: &Program, name: &'static str, reports: bool, params: &'static [&'static str]) -> Result<(), Error<'b>> {
+fn ensure_has_required_func<'b>(program: &Program, name: &'static str, reports: bool, params: &'static [&'static str]) -> Result<(), ErrorKind<'b>> {
     if let Some(&func) = program.funcs.get(name) {
         if func.reports == reports && func.params.len() == params.len() && func.params.iter().zip(params).all(|(a, &b)| a.id == b) {
             return Ok(())
         }
     }
-    Err(Error::MissingRequiredFunc { name, reports, params })
+    Err(ErrorKind::MissingRequiredFunc { name, reports, params })
 }
-pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>> {
+fn parse_private<'b>(project_name: &str, input: &'b str) -> Result<String, ErrorKind<'b>> {
     let items = ast::parse(input)?;
     let program = Program::init_global(&items)?;
 
@@ -648,6 +773,9 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
         patch_props = escape_xml(&Punctuated(["color"].iter().chain(program.patches.props.keys()), "\r").to_string()),
     ))
 }
+pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>> {
+    parse_private(project_name, input).map_err(|kind| Error { kind, src: input, line_starts: get_line_starts(input) })
+}
 
 #[test] fn test_prog_header() {
     let items = ast::parse(r#"
@@ -695,7 +823,7 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
 }
 
 #[test] fn test_disjoint_owns() {
-    if let Err(x) = parse("test", r#"
+    if let Err(x) = parse_private("test", r#"
     breed [dogs dog]
     breed [cats cat]
     breed [pups pup]
@@ -706,7 +834,7 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
     to setup end
     to go end
     "#) { panic!("{:?}", x) }
-    if let Err(x) = parse("test", r#"
+    if let Err(x) = parse_private("test", r#"
     breed [dogs dog]
     breed [cats cat]
     breed [pups pup]
@@ -717,229 +845,229 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
     "#) { panic!("{:?}", x) }
 }
 #[test] fn test_redundant_owns() {
-    match parse("test", r#"
+    match parse_private("test", r#"
     breed [dogs dog]
     breed [cats cat]
     breed [pups pup]
     turtles-own [water]
     cats-own [water]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "water"); assert_eq!(previous.id, "water") }, x => panic!("{:?}", x) }
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "water"); assert_eq!(previous.id, "water") }, x => panic!("{:?}", x) }
 }
 
 // types of conflict sources: breed, func, global, lexical, patches prop, breed prop
 // we'll do symmetric tests for all pairs of types, including same type
 
 #[test] fn test_name_overlap_same_type() {
-    match parse("test", r#"
+    match parse_private("test", r#"
     breed [cats cat]
     breed [x catS]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [cats cat]
     breed [x cAt]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     to foo end
     to Foo end
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     globals [ merp Merp ]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "merp"); assert_eq!(previous.id, "merp") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "merp"); assert_eq!(previous.id, "merp") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     to thing[x]
         let x 4
     end
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "x"); assert_eq!(previous.id, "x") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "x"); assert_eq!(previous.id, "x") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     to thing
         let x 4
         if x [
             let x 6
         ]
     end
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "x"); assert_eq!(previous.id, "x") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "x"); assert_eq!(previous.id, "x") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     patches-own [energy energy]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "energy"); assert_eq!(previous.id, "energy") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "energy"); assert_eq!(previous.id, "energy") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [dogs dog]
     turtles-own [a]
     dogs-own [a]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "a"); assert_eq!(previous.id, "a") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "a"); assert_eq!(previous.id, "a") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [dogs dog]
     dogs-own [a]
     turtles-own [a]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "a"); assert_eq!(previous.id, "a") }, x => panic!("{:?}", x) }
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "a"); assert_eq!(previous.id, "a") }, x => panic!("{:?}", x) }
 }
 #[test] fn test_name_overlap_breed_other() {
-    match parse("test", r#"
+    match parse_private("test", r#"
     breed [cats cat]
     to cats end
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [cats cat]
     to cat end
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     to cats end
     breed [cats cat]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     to cat end
     breed [cats cat]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [cats cat]
     globals [cats]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [cats cat]
     globals [cat]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     globals [caTS]
     breed [cats cAt]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     globals [cat]
     breed [cats cat]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [cats cat]
     to go let cAts 0 end
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [cats cat]
     to go let cat 0 end
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     to go let cats 0 end
     breed [cats cat]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     to go let cat 0 end
     breed [cats cat]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [cats cat]
     cats-own [cats]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [caTs cAt]
     breed [dogs dog]
     dogs-own [Cat]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     cats-own [cats]
     breed [cats cat]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cats"); assert_eq!(previous.id, "cats") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     dogs-own [cAt]
     breed [cats cat]
     breed [dogs dog]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [cats cat]
     patches-own [cat]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     patches-own [cat]
     breed [cats caT]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "cat"); assert_eq!(previous.id, "cat") }, x => panic!("{:?}", x) }
 }
 #[test] fn test_name_overlap_func_other() {
-    match parse("test", r#"
+    match parse_private("test", r#"
     globals [Foo]
     to foo end
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     to foo end
     globals [Foo]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     to foo let Foo 4 end
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     to foo end
     to bar let Foo 54 end
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     to foo end
     patches-own [FOO]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     patches-own [FOO]
     to foo end
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [birds bird]
     birds-own [FoO]
     to foo end
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [birds bird]
     to foo end
     birds-own [FoO]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "foo"); assert_eq!(previous.id, "foo") }, x => panic!("{:?}", x) }
 }
 #[test] fn test_name_overlap_global_other() {
-    match parse("test", r#"
+    match parse_private("test", r#"
     globals [derp]
     to foo let Derp 5 end
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     to foo let Derp 5 end
     globals [derp]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     globals [derp]
     breed [ducks duck]
     ducks-own [derP]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [ducks duck]
     ducks-own [derP]
     globals [derp]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     globals [derp]
     patches-own [DERP]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     patches-own [DERP]
     globals [derp]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "derp"); assert_eq!(previous.id, "derp") }, x => panic!("{:?}", x) }
 }
 #[test] fn test_name_overlap_lexical_other() {
-    match parse("test", r#"
+    match parse_private("test", r#"
     patches-own [shells]
     to foo let sheLLs 3 end
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "shells"); assert_eq!(previous.id, "shells") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "shells"); assert_eq!(previous.id, "shells") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     to foo let sheLLs 3 end
     patches-own [shells]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "shells"); assert_eq!(previous.id, "shells") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "shells"); assert_eq!(previous.id, "shells") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     to foo let sheLLs 3 end
     breed [geese goose]
     geese-own [shells]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "shells"); assert_eq!(previous.id, "shells") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "shells"); assert_eq!(previous.id, "shells") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [geese goose]
     geese-own [shells]
     to foo let sheLLs 3 end
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "shells"); assert_eq!(previous.id, "shells") }, x => panic!("{:?}", x) }
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "shells"); assert_eq!(previous.id, "shells") }, x => panic!("{:?}", x) }
 }
 #[test] fn test_name_overlap_patchprop_other() {
-    match parse("test", r#"
+    match parse_private("test", r#"
     patches-own [tic-tAcs]
     breed [dogs dog]
     dogs-own [Tic-TACs]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "tic-tacs"); assert_eq!(previous.id, "tic-tacs") }, x => panic!("{:?}", x) }
-    match parse("test", r#"
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "tic-tacs"); assert_eq!(previous.id, "tic-tacs") }, x => panic!("{:?}", x) }
+    match parse_private("test", r#"
     breed [dogs dog]
     dogs-own [Tic-TACs]
     patches-own [tic-tAcs]
-    "#).unwrap_err() { Error::Redefine { name, previous } => { assert_eq!(name.id, "tic-tacs"); assert_eq!(previous.id, "tic-tacs") }, x => panic!("{:?}", x) }
+    "#).unwrap_err() { ErrorKind::Redefine { name, previous } => { assert_eq!(name.id, "tic-tacs"); assert_eq!(previous.id, "tic-tacs") }, x => panic!("{:?}", x) }
 }

@@ -236,6 +236,7 @@ dependencies = [
  "lalrpop-util",
  "lazy_static",
  "linked-hash-map",
+ "ordslice",
  "regex",
  "xml-rs",
 ]
@@ -245,6 +246,12 @@ name = "new_debug_unreachable"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4a24736216ec316047a1fc4252e27dabb04218aa4a3f37c6e7ddbf1f9782b54"
+
+[[package]]
+name = "ordslice"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd20eec3dbe4376829cb7d80ae6ac45e0a766831dca50202ff2d40db46a8a024"
 
 [[package]]
 name = "petgraph"

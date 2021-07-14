@@ -21,8 +21,10 @@ fn main() {
         let prog_stop = content.find("@#$#@#$#@").unwrap_or(content.len());
         let program = &content[..prog_stop];
 
-        let xml = nl2xml::parse(&input[..input.len()-6], program).expect("failed to translate");
-        println!("{}", xml);
+        match nl2xml::parse(&input[..input.len()-6], program) {
+            Ok(xml) => println!("{}", xml),
+            Err(e) => eprintln!("{}", e),
+        }
     }
     else {
         eprintln!("unknown input file type");

@@ -80,3 +80,17 @@ impl HSV {
     assert_eq!(HSV::new(299.0, 0.58, 0.91).to_rgb().to_hex(), 0xE661E8);
     assert_eq!(HSV::new(310.0, 0.33, 0.77).to_rgb().to_hex(), 0xC484BA);
 }
+
+pub fn get_line_starts(input: &str) -> Vec<usize> {
+    let mut res = Vec::with_capacity(128);
+    res.push(0);
+    for (p, c) in input.char_indices() {
+        if c == '\n' { res.push(p + 1); }
+    }
+    res
+}
+#[test] fn test_line_starts() {
+    assert_eq!(get_line_starts("hello world\nthis\n\nis\r\n\r\n\r\ndog\n"), &[0, 12, 17, 18, 22, 24, 26, 30]);
+    assert_eq!(get_line_starts("hello world\nthis\n\nis\r\n\r\n\r\ndog"), &[0, 12, 17, 18, 22, 24, 26]);
+    assert_eq!(get_line_starts("\nhello world\nthis\n\nis\r\n\r\n\r\ndog"), &[0, 1, 13, 18, 19, 23, 25, 27]);
+}
