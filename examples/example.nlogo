@@ -60,7 +60,7 @@ to go
         let t (one-of turtles)
         if t != nobody [
             set dd (distance t)
-            set dd [heading] of t + 1
+            set dd [heading] of t + something
         ]
         if energy < 0 [
             ifelse (random-float 1) < 0.1 [ die ] [
@@ -71,6 +71,10 @@ to go
         ]
     ]
     tick
+end
+
+to-report something
+    report 42
 end
 
 to-report add-mul [x y z]

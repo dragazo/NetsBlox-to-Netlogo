@@ -73,6 +73,7 @@ enum ErrorKind<'a> {
     FunctionArgCount { func: Ident, invoke_span: Span, got: usize, expected: usize, is_builtin: bool },
     NonReporterInExpr { func: Ident, invoke_span: Span, is_builtin: bool },
     ReporterValueDiscarded { func: Ident, invoke_span: Span, is_builtin: bool },
+    AssignToFunc { func: Ident, invoke_span: Span, is_builtin: bool },
 
     ReportInNonReporter { func: Ident, report_span: Span },
     UnreachableCode { func: Ident, unreachable_span: Span },
@@ -198,6 +199,13 @@ impl Display for Error<'_> {
                 };
                 self.write_error(f, "reporter value discarded", Some(*invoke_span), Some(&m))?
             }
+            ErrorKind::AssignToFunc { func, invoke_span, is_builtin } => {
+                let m = match is_builtin {
+                    false => format!("{} (defined on line {}) is not a variable", func.id, self.get_line_num(func.span().0)),
+                    true => format!("{} (built-in) is not a variable", func.id),
+                };
+                self.write_error(f, "assign to function", Some(*invoke_span), Some(&m))?
+            }
 
             ErrorKind::ReportInNonReporter { report_span, .. } => self.write_error(f, "report statement in non-reporter", Some(*report_span), Some("the enclosing function does not report a value.\ndid you mean to use 'to-report' instead of 'to'?"))?,
             ErrorKind::UnreachableCode { unreachable_span, .. } => self.write_error(f, "unreachable code", Some(*unreachable_span), Some("a previous instruction already exited the function or started an infinite loop"))?,
@@ -210,11 +218,14 @@ impl Display for Error<'_> {
     }
 }
 
-enum StorageLocation {
+enum StorageLocation<'a> {
     Builtin { get: &'static str, set: Option<(&'static str, &'static str)> },
     Lexical, Property, PatchesProp,
 
     BuiltinColor,
+
+    // in an expression, func calls with no args will at first be parsed as variables to avoid ambiguity in the grammar
+    FunctionName { func: &'a Function, is_builtin: bool },
 }
 
 #[derive(Default)]
@@ -274,7 +285,10 @@ impl<'a> Program<'a> {
             "xcor" => StorageLocation::Builtin { get: r#"<custom-block s="x position"></custom-block>"#, set: Some((r#"<custom-block s="set x to %n">"#, "</custom-block>")) },
             "ycor" => StorageLocation::Builtin { get: r#"<custom-block s="y position"></custom-block>"#, set: Some((r#"<custom-block s="set y to %n">"#, "</custom-block>")) },
             "color" => StorageLocation::BuiltinColor,
-            _ => return Err(ErrorKind::VariableNoTDefined { name: ident.clone() }),
+            _ => match self.funcs.get(id) {
+                Some(&func) => StorageLocation::FunctionName { func, is_builtin: false },
+                None => return Err(ErrorKind::VariableNoTDefined { name: ident.clone() }),
+            }
         })
     }
     fn ensure_breed_defined<'b>(&self, ident: &Ident, should_be_plural: Option<bool>) -> Result<(), ErrorKind<'b>> {
@@ -469,6 +483,7 @@ impl<'a> Program<'a> {
                     StorageLocation::PatchesProp => write!(script, r#"<custom-block s="get patch %s"><l>{}</l></custom-block>"#, escape_xml(rename_patch_prop(&ident.id))).unwrap(),
                     StorageLocation::Builtin { get, .. } => *script += get,
                     StorageLocation::BuiltinColor => *script += r#"<custom-block s="pen color"></custom-block>"#,
+                    StorageLocation::FunctionName { .. } => self.format_func_call(script, scopes, &FnCall { name: ident.clone(), args: vec![] }, true)?,
                 }
             }
         }
@@ -549,6 +564,7 @@ impl<'a> Program<'a> {
                             *script += "</custom-block>";
                         }
                     }
+                    StorageLocation::FunctionName { func, is_builtin } => return Err(ErrorKind::AssignToFunc { func: func.name.clone(), invoke_span: assign.name.span(), is_builtin }),
                 }
                 Stmt::Loop(repeat) => {
                     *script += r#"<block s="doForever"><script>"#;
