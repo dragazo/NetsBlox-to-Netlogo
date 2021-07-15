@@ -26,18 +26,21 @@ to setup
         let v pcolor
         let bb no-turtles
         let bbb (any? bb)
+        set bbb not true and false
+        set bbb 34
+        set bbb (- bbb) + random-float 3
         let cc (atan 2.1 -1.7)
     ]
     create-ordered-birds 100 [
-        (fd 1)
-        let tre1 xcor
+        fd 1
+        (let tre1 xcor)
         let tre2 ycor
         set xcor 0
         set ycor 0
         (setxy 0 0)
         set energy 10
         set color red
-        set color (list 123 32 12)
+        (set color (list 123 32 12))
         let temp color
         set size 0.5 + (random 1.5)
         let temp2 size
@@ -46,13 +49,13 @@ end
 to go
     ask patches [
         set countdown (countdown - 1)
-        if countdown <= 0 [
+        (if countdown <= 0 [
             set pcolor green
             set countdown (random 100)
-        ]
+        ])
     ]
-    ask turtles [
-        (rt 1)
+    ((ask turtles [
+        rt 1
         (fd 1)
         set pcolor brown
         set energy (energy - (random-float 1))
@@ -73,12 +76,12 @@ to go
                 ] [ set energy 10 (setxy random-xcor random-ycor) set color (list (random 256) (random 256) (random 256)) ]
             ]
         ]
-    ]
+    ]))
     tick
 end
 
 to-report something
-    report 42
+    (report 42)
 end
 
 to-report add-mul [x y z]

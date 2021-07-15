@@ -5,6 +5,9 @@ lalrpop_mod!(grammar, "/nl2xml/grammar.rs");
 use lalrpop_util::ParseError;
 use lalrpop_util::lexer::Token;
 
+fn clean_ident(s: &str) -> String {
+    s.to_lowercase()
+}
 fn clean_string(s: &str) -> String {
     assert!(s.len() >= 2);
     assert!({ let c = s.chars().next().unwrap(); c == '"' || c == '\'' });
@@ -273,7 +276,7 @@ pub fn parse(program: &str) -> Result<Vec<Item>, ParseError<usize, Token, &str>>
     to-report go [x]
         report (list -x7 1.23 2 + 3 energy-vals 경험치 "hello world" (list 1 2))
         report (list)
-        report (go x - 1)
+        report (go (x - 1))
         clear-all
         merp ; call a function taking no args
         die

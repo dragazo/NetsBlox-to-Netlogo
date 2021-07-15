@@ -134,7 +134,7 @@ impl Error<'_> {
                 }
             }
             if lines.len() == 1 {
-                let underline = "-".repeat(self.src[span.0..span.1].chars().count());
+                let underline = "^".repeat(self.src[span.0..span.1].chars().count());
                 let prefix = " ".repeat(span.0 - self.line_starts[start_index] - chop_len + space_prefix.len());
                 writeln!(f, "  {}{}", prefix, underline)?;
             }
