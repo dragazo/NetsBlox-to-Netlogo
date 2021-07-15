@@ -61,6 +61,10 @@ to go
         if t != nobody [
             set dd (distance t)
             set dd [heading] of t + something
+            set dd [heading] of no-turtles
+            set dd no-turtles in-radius 5 in-radius 2
+            set dd [xcor] of no-turtles in-radius 4
+            set dd [xcor] of no-turtles in-radius 4 in-radius 3
         ]
         if energy < 0 [
             ifelse (random-float 1) < 0.1 [ die ] [

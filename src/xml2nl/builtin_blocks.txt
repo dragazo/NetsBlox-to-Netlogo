@@ -49,6 +49,7 @@ random y position
 turtle set %'items'
 is %'set' empty? (turtle set)
 random item %'set' (turtle set)
+turtles %'set' within distance %'d'
 nobody
 
 setup patches

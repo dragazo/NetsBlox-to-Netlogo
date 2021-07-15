@@ -118,15 +118,19 @@ Power: Expr = {
     Term,
 };
 Term: Expr = {
-    <l:@L> "not" <val:Atom> => Expr::Not { val: Box::new(val), lspan: l },
-    "(" <l:@L> "-" <val:Atom> ")" <r:@R> => Expr::Neg { val: Box::new(val), lspan: l },
-    Atom,
+    <l:@L> "not" <val:Molecule> => Expr::Not { val: Box::new(val), lspan: l },
+    <l:@L> "[" <expr:Expr> "]" "of" <target:Molecule> => Expr::Fetch { target: Box::new(target), expr: Box::new(expr), lspan: l },
+    Molecule,
+};
+Molecule: Expr = {
+    <agents:Molecule> "in-radius" <radius:Atom> => Expr::InRadius { agents: Box::new(agents), radius: Box::new(radius) },
+    Atom
 };
 Atom: Expr = {
     Value => Expr::Value(<>),
     FnCall => Expr::FnCall(<>),
     "(" <Expr> ")" => <>,
-    <l:@L> "[" <expr:Expr> "]" "of" <target:Atom> => Expr::Fetch { target: Box::new(target), expr: Box::new(expr), lspan: l },
+    "(" <l:@L> "-" <val:Atom> ")" <r:@R> => Expr::Neg { val: Box::new(val), lspan: l },
 };
 
 FnCall: FnCall = "(" <name:Ident> <args:Expr+> ")" => FnCall { name, args };

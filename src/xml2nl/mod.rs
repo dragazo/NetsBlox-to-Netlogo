@@ -253,7 +253,7 @@ impl Program {
                     
                         let target = self.parse_script_recursive(&script.children[0])?;
                         let action = self.parse_script_recursive(surely(script.children[1].get(&["autolambda"]))?)?;
-                        Ok(format!("[{}] of {}", action, target))
+                        Ok(format!("([{}] of {})", action, target))
                     }
                     "set pen color to %l" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
@@ -490,6 +490,12 @@ impl Program {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         let src = self.parse_script_recursive(&script.children[0])?;
                         Ok(format!("(one-of {})", src))
+                    }
+                    "turtles %l within distance %n" => {
+                        if script.children.len() != 2 { return Err(Error::InvalidProject); }
+                        let agents = self.parse_script_recursive(&script.children[0])?;
+                        let distance = self.parse_script_recursive(&script.children[1])?;
+                        Ok(format!("({} in-radius {})", agents, distance))
                     }
                     "doIfElse" => {
                         if script.children.len() != 3 { return Err(Error::InvalidProject); }

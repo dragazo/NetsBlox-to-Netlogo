@@ -152,6 +152,7 @@ pub enum Expr {
     Neg { val: Box<Expr>, lspan: usize },
 
     Fetch { target: Box<Expr>, expr: Box<Expr>, lspan: usize },
+    InRadius { agents: Box<Expr>, radius: Box<Expr> },
 
     FnCall(FnCall),
     Value(Value),
@@ -186,6 +187,7 @@ impl Spanned for Expr {
             Expr::Neg { val, lspan } => Span(*lspan, val.span().1),
 
             Expr::Fetch { lspan, target, .. } => Span(*lspan, target.span().1),
+            Expr::InRadius { agents, radius } => Span(agents.span().0, radius.span().1),
 
             Expr::FnCall(x) => x.span(),
             Expr::Value(x) => x.span(),
@@ -532,5 +534,121 @@ pub fn parse(program: &str) -> Result<Vec<Item>, ParseError<usize, Token, &str>>
             }
             x => panic!("{:?}", x),
         }
+    }
+}
+
+#[test] fn test_in_radius_assoc() {
+    let prog = r#"
+    to go [x]
+        set x 1 + turtles in-radius 5 + 2
+        set x turtles in-radius 5 in-radius 2
+    end
+    "#;
+    let res = parse(prog).unwrap();
+    assert_eq!(res.len(), 1);
+    let go = match &res[0] {
+        Item::Function(f) => f,
+        x => panic!("{:?}", x),
+    };
+    assert_eq!(go.stmts.len(), 2);
+
+    match &go.stmts[0] {
+        Stmt::Assign(Assign { value, .. }) => match value {
+            Expr::Add { a, b } => {
+                match &**a {
+                    Expr::Add { a, b } => {
+                        match &**a {
+                            Expr::Value(Value::Number(x)) => assert_eq!(x.value, "1"),
+                            x => panic!("{:?}", x),
+                        }
+                        match &**b {
+                            Expr::InRadius { agents, radius } => {
+                                match &**agents {
+                                    Expr::Value(Value::Ident(x)) => assert_eq!(x.id, "turtles"),
+                                    x => panic!("{:?}", x),
+                                }
+                                match &**radius {
+                                    Expr::Value(Value::Number(x)) => assert_eq!(x.value, "5"),
+                                    x => panic!("{:?}", x),
+                                }
+                            }
+                            x => panic!("{:?}", x),
+                        }
+                    }
+                    x => panic!("{:?}", x),
+                }
+                match &**b {
+                    Expr::Value(Value::Number(x)) => assert_eq!(x.value, "2"),
+                    x => panic!("{:?}", x),
+                }
+            }
+            x => panic!("{:?}", x),
+        }
+        x => panic!("{:?}", x),
+    }
+    match &go.stmts[1] {
+        Stmt::Assign(Assign { value, .. }) => match value {
+            Expr::InRadius { agents, radius } => {
+                match &**agents {
+                    Expr::InRadius { agents, radius } => {
+                        match &**agents {
+                            Expr::Value(Value::Ident(x)) => assert_eq!(x.id, "turtles"),
+                            x => panic!("{:?}", x),
+                        }
+                        match &**radius {
+                            Expr::Value(Value::Number(x)) => assert_eq!(x.value, "5"),
+                            x => panic!("{:?}", x),
+                        }
+                    }
+                    x => panic!("{:?}", x),
+                }
+                match &**radius {
+                    Expr::Value(Value::Number(x)) => assert_eq!(x.value, "2"),
+                    x => panic!("{:?}", x),
+                }
+            }
+            x => panic!("{:?}", x),
+        }
+        x => panic!("{:?}", x),
+    }
+}
+#[test] fn test_mix_high_prec() {
+    let prog = r#"
+    to go [x]
+        set x [xcor] of turtles in-radius 4
+    end
+    "#;
+    let res = parse(prog).unwrap();
+    assert_eq!(res.len(), 1);
+    let go = match &res[0] {
+        Item::Function(f) => f,
+        x => panic!("{:?}", x),
+    };
+    assert_eq!(go.stmts.len(), 1);
+
+    match &go.stmts[0] {
+        Stmt::Assign(Assign { value, .. }) => match value {
+            Expr::Fetch { target, expr, .. } => {
+                match &**expr {
+                    Expr::Value(Value::Ident(x)) => assert_eq!(x.id, "xcor"),
+                    x => panic!("{:?}", x),
+                }
+                match &**target {
+                    Expr::InRadius { agents, radius } => {
+                        match &**agents {
+                            Expr::Value(Value::Ident(x)) => assert_eq!(x.id, "turtles"),
+                            x => panic!("{:?}", x),
+                        }
+                        match &**radius {
+                            Expr::Value(Value::Number(x)) => assert_eq!(x.value, "4"),
+                            x => panic!("{:?}", x),
+                        }
+                    }
+                    x => panic!("{:?}", x),
+                }
+            }
+            x => panic!("{:?}", x),
+        }
+        x => panic!("{:?}", x),
     }
 }

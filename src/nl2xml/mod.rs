@@ -464,6 +464,12 @@ impl<'a> Program<'a> {
                 self.generate_expr_script(script, scopes, expr)?;
                 *script += "</autolambda><list></list></block></custom-block>";
             }
+            Expr::InRadius { agents, radius } => {
+                *script += r#"<custom-block s="turtles %l within distance %n">"#;
+                self.generate_expr_script(script, scopes, agents)?;
+                self.generate_expr_script(script, scopes, radius)?;
+                *script += "</custom-block>";
+            }
 
             Expr::FnCall(call) => self.format_func_call(script, scopes, call, true)?,
 
