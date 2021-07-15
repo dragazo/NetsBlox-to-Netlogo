@@ -156,6 +156,7 @@ pub enum Expr {
 
     Fetch { target: Box<Expr>, expr: Box<Expr>, lspan: usize },
     InRadius { agents: Box<Expr>, radius: Box<Expr> },
+    MinMaxOneOf { agents: Box<Expr>, expr: Box<Expr>, is_max: bool, raw_span: Span },
 
     FnCall(FnCall),
     Value(Value),
@@ -191,6 +192,7 @@ impl Spanned for Expr {
 
             Expr::Fetch { lspan, target, .. } => Span(*lspan, target.span().1),
             Expr::InRadius { agents, radius } => Span(agents.span().0, radius.span().1),
+            Expr::MinMaxOneOf { raw_span, .. } => *raw_span,
 
             Expr::FnCall(x) => x.span(),
             Expr::Value(x) => x.span(),

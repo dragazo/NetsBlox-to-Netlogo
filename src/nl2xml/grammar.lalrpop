@@ -23,10 +23,17 @@ else {
 RawUnaryFunc = {
     "forward", "fd", "right", "rt", "left", "lt",
     "random", "random-float",
-    "any?", "one-of",
+    "any?", "one-of", "other",
     "distance",
+    "min", "max",
 };
 UnaryFunc: Ident = <l:@L> <name:RawUnaryFunc> <r:@R> => Ident { id: clean_ident(name), raw_span: Span(l, r) };
+
+RawBinaryFunc = {
+    "setxy", "distancexy",
+    "atan",
+};
+BinaryFunc: Ident = <l:@L> <name:RawBinaryFunc> <r:@R> => Ident { id: clean_ident(name), raw_span: Span(l, r) };
 
 Item: Item = {
     Globals => Item::Globals(<>),
@@ -128,6 +135,8 @@ Power: Expr = {
 };
 Term: Expr = {
     <l:@L> "[" <expr:Expr> "]" "of" <target:Molecule> => Expr::Fetch { target: Box::new(target), expr: Box::new(expr), lspan: l },
+    <l:@L> "min-one-of" <agents:Expr> "[" <expr:Expr> "]" <r:@R> => Expr::MinMaxOneOf { agents: Box::new(agents), expr: Box::new(expr), is_max: false, raw_span: Span(l, r) },
+    <l:@L> "max-one-of" <agents:Expr> "[" <expr:Expr> "]" <r:@R> => Expr::MinMaxOneOf { agents: Box::new(agents), expr: Box::new(expr), is_max: true, raw_span: Span(l, r) },
     <l:@L> "not" <val:Molecule> => Expr::Not { val: Box::new(val), lspan: l },
     "(" <l:@L> "-" <val:Molecule> ")" => Expr::Neg { val: Box::new(val), lspan: l },
     FnCall => Expr::FnCall(<>),
@@ -145,6 +154,7 @@ Atom: Expr = {
 FnCall: FnCall = {
     "(" <name:Ident> <args:Term+> ")" => FnCall { name, args },
     <name:UnaryFunc> <arg:Term> => FnCall { name, args: vec![arg] },
+    <name:BinaryFunc> <arg1:Term> <arg2:Term> => FnCall { name, args: vec![arg1, arg2] },
 };
 
 Value: Value = {

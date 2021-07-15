@@ -401,6 +401,18 @@ impl<'a> Program<'a> {
                 self.generate_expr_script(script, scopes, &call.args[0])?;
                 *script += "</custom-block>";
             }
+            x @ ("min" | "max") => {
+                check_usage(call, None, true, in_expr, Some(1))?;
+                write!(script, r#"<custom-block s="{} %l">"#, x).unwrap();
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</custom-block>";
+            }
+            "other" => {
+                check_usage(call, None, true, in_expr, Some(1))?;
+                *script += r#"<custom-block s="exclude myself %l">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</custom-block>";
+            }
             "distancexy" => {
                 check_usage(call, None, true, in_expr, Some(2))?;
                 *script += r#"<custom-block s="distance from x: %n y: %n">"#;
@@ -469,6 +481,13 @@ impl<'a> Program<'a> {
                 self.generate_expr_script(script, scopes, agents)?;
                 self.generate_expr_script(script, scopes, radius)?;
                 *script += "</custom-block>";
+            }
+            Expr::MinMaxOneOf { agents, expr, is_max, .. } => {
+                write!(script, r#"<custom-block s="get one %l with {} %repRing">"#, if *is_max { "max" } else { "min" }).unwrap();
+                self.generate_expr_script(script, scopes, agents)?;
+                *script += r#"<block s="reifyReporter"><autolambda>"#;
+                self.generate_expr_script(script, scopes, expr)?;
+                *script += "</autolambda><list></list></block></custom-block>";
             }
 
             Expr::FnCall(call) => self.format_func_call(script, scopes, call, true)?,

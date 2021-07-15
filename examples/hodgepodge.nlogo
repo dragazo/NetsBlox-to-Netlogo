@@ -1,3 +1,6 @@
+; this is just a bunch of random things that have been used for testing backwards compatibility of new features.
+; this is an example of supported program structures, rather than an example of a useful or meaningful project.
+
 globals [ merppp ]
 
 breed [goats goat]
@@ -30,6 +33,7 @@ to setup
         set bbb 34
         set bbb (- bbb) + random-float 3
         let cc (atan 2.1 -1.7)
+        set cc atan 2.1 -1.7
     ]
     create-ordered-birds 100 [
         fd 1
@@ -60,14 +64,20 @@ to go
         set pcolor brown
         set energy (energy - (random-float 1))
         let dd (distancexy 0 0)
+        set dd distancexy 0 0
         let t (one-of turtles)
         if t != nobody [
             set dd (distance t)
             set dd [heading] of t + something
             set dd [heading] of no-turtles
+            set dd other turtles
             set dd no-turtles in-radius 5 in-radius 2
             set dd [xcor] of no-turtles in-radius 4
             set dd [xcor] of no-turtles in-radius 4 in-radius 3
+            set dd min [xcor] of turtles
+            set dd max [heading] of turtles
+            set dd max-one-of turtles [ycor]
+            set dd min-one-of turtles [energy]
         ]
         if energy < 0 [
             ifelse (random-float 1) < 0.1 [ die ] [

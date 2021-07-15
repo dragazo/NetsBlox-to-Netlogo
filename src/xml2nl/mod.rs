@@ -252,8 +252,8 @@ impl Program {
                         }
                     
                         let target = self.parse_script_recursive(&script.children[0])?;
-                        let action = self.parse_script_recursive(surely(script.children[1].get(&["autolambda"]))?)?;
-                        Ok(format!("([{}] of {})", action, target))
+                        let expr = self.parse_script_recursive(surely(script.children[1].get(&["autolambda"]))?)?;
+                        Ok(format!("([{}] of {})", expr, target))
                     }
                     "set pen color to %l" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
@@ -496,6 +496,30 @@ impl Program {
                         let agents = self.parse_script_recursive(&script.children[0])?;
                         let distance = self.parse_script_recursive(&script.children[1])?;
                         Ok(format!("({} in-radius {})", agents, distance))
+                    }
+                    "exclude myself %l" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidProject); }
+                        let src = self.parse_script_recursive(&script.children[0])?;
+                        Ok(format!("(other {})", src))
+                    }
+                    x @ ("min %l" | "max %l") => {
+                        let is_min = x.starts_with("min");
+
+                        if script.children.len() != 1 { return Err(Error::InvalidProject); }
+                        let src = self.parse_script_recursive(&script.children[0])?;
+                        Ok(format!("({} {})", if is_min { "min" } else { "max" }, src))
+                    }
+                    x @ ("get one %l with min %repRing" | "get one %l with max %repRing") => {
+                        let is_min = x.contains("min");
+
+                        if script.children.len() != 2 { return Err(Error::InvalidProject); }
+                        if script.children[1].name != "block" || surely(script.children[1].attr("s"))?.value != "reifyReporter" {
+                            return Err(Error::NonConstantCodeBlock);
+                        }
+                    
+                        let agents = self.parse_script_recursive(&script.children[0])?;
+                        let expr = self.parse_script_recursive(surely(script.children[1].get(&["autolambda"]))?)?;
+                        Ok(format!("({}-one-of {} [{}])", if is_min { "min" } else { "max" }, agents, expr))
                     }
                     "doIfElse" => {
                         if script.children.len() != 3 { return Err(Error::InvalidProject); }

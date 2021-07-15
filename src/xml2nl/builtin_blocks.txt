@@ -50,7 +50,13 @@ turtle set %'items'
 is %'set' empty? (turtle set)
 random item %'set' (turtle set)
 turtles %'set' within distance %'d'
+exclude myself %'objs'
 nobody
+
+min %'list'
+max %'list'
+get one %'objs' with min %'expr'
+get one %'objs' with max %'expr'
 
 setup patches
 update background
