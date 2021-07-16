@@ -407,6 +407,24 @@ impl<'a> Program<'a> {
                 self.generate_expr_script(script, scopes, &call.args[0])?;
                 *script += "</custom-block>";
             }
+            "sum" => {
+                check_usage(call, None, true, in_expr, Some(1))?;
+                *script += r#"<custom-block s="sum %l">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</custom-block>";
+            }
+            "mean" => {
+                check_usage(call, None, true, in_expr, Some(1))?;
+                *script += r#"<custom-block s="average %l">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</custom-block>";
+            }
+            x @ ("abs" | "sin" | "cos" | "tan" | "asin" | "acos" | "sqrt" | "ln" | "log" | "floor" | "ceiling") => {
+                check_usage(call, None, true, in_expr, Some(1))?;
+                write!(script, r#"<block s="reportMonadic"><l><option>{}</option></l>"#, x).unwrap();
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</block>";
+            }
             "other" => {
                 check_usage(call, None, true, in_expr, Some(1))?;
                 *script += r#"<custom-block s="exclude myself %l">"#;

@@ -78,6 +78,8 @@ to go
             set dd max [heading] of turtles
             set dd max-one-of turtles [ycor]
             set dd min-one-of turtles [energy]
+            set dd sum [abs xcor] of turtles
+            set dd mean [sin xcor] of turtles
         ]
         if energy < 0 [
             ifelse (random-float 1) < 0.1 [ die ] [

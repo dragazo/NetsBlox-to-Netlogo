@@ -521,6 +521,16 @@ impl Program {
                         let expr = self.parse_script_recursive(surely(script.children[1].get(&["autolambda"]))?)?;
                         Ok(format!("({}-one-of {} [{}])", if is_min { "min" } else { "max" }, agents, expr))
                     }
+                    "sum %l" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidProject); }
+                        let src = self.parse_script_recursive(&script.children[0])?;
+                        Ok(format!("(sum {})", src))
+                    }
+                    "average %l" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidProject); }
+                        let src = self.parse_script_recursive(&script.children[0])?;
+                        Ok(format!("(mean {})", src))
+                    }
                     "doIfElse" => {
                         if script.children.len() != 3 { return Err(Error::InvalidProject); }
                         let condition = self.parse_script_recursive(&script.children[0])?;

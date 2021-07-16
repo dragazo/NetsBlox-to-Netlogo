@@ -58,5 +58,8 @@ max %'list'
 get one %'objs' with min %'expr'
 get one %'objs' with max %'expr'
 
+sum %'list'
+average %'list'
+
 setup patches
 update background

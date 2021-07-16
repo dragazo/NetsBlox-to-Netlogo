@@ -25,7 +25,8 @@ RawUnaryFunc = {
     "random", "random-float",
     "any?", "one-of", "other",
     "distance",
-    "min", "max",
+    "min", "max", "sum", "mean",
+    "abs", "sin", "cos", "tan", "asin", "acos", "sqrt", "ln", "log", "floor", "ceiling",
 };
 UnaryFunc: Ident = <l:@L> <name:RawUnaryFunc> <r:@R> => Ident { id: clean_ident(name), raw_span: Span(l, r) };
 
