@@ -2,6 +2,7 @@
 
 clone clones
 scale
+asker
 
 # source: https://ccl.northwestern.edu/netlogo/docs/dictionary.html
 # we don't currently support all of these, but we define them here so the names are reserved

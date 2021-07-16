@@ -80,6 +80,10 @@ to go
             set dd min-one-of turtles [energy]
             set dd sum [abs xcor] of turtles
             set dd mean [sin xcor] of turtles
+            ask no-turtles [
+                let fg self
+                set fg myself
+            ]
         ]
         if energy < 0 [
             ifelse (random-float 1) < 0.1 [ die ] [

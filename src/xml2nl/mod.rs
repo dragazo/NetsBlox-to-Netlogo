@@ -202,6 +202,8 @@ impl Program {
                     "reset everything" => Ok("clear-all".into()),
                     "random x position" => Ok("random-xcor".into()),
                     "random y position" => Ok("random-ycor".into()),
+                    "self" => Ok("self".into()),
+                    "asker" => Ok("myself".into()),
                     "pick random 0 up to %n" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         let max = self.parse_script_recursive(&script.children[0])?;

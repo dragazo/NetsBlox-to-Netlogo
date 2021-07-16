@@ -27,6 +27,8 @@ reset patches
 reset global variables
 reset everything
 
+self
+asker
 current patch
 distance from x: %'x' y: %'y'
 distance from %'sprite'
