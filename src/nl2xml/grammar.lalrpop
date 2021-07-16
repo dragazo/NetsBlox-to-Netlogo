@@ -32,6 +32,7 @@ UnaryFunc: Ident = <l:@L> <name:RawUnaryFunc> <r:@R> => Ident { id: clean_ident(
 
 RawBinaryFunc = {
     "setxy", "distancexy", "towardsxy",
+    "subtract-headings",
     "atan",
 };
 BinaryFunc: Ident = <l:@L> <name:RawBinaryFunc> <r:@R> => Ident { id: clean_ident(name), raw_span: Span(l, r) };

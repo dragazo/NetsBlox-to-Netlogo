@@ -87,6 +87,7 @@ to go
             if t != self [
                 set dd towardsxy 0 0
                 set dd towards t
+                set dd subtract-headings heading [heading] of t
             ]
         ]
         if energy < 0 [

@@ -19,7 +19,7 @@ use lalrpop_util::{ParseError, lexer::Token};
 use xml::escape::escape_str_attribute as escape_xml;
 use ordslice::Ext;
 
-const BASE_SPRITE_SCALE: f64 = 0.5;
+const BASE_SPRITE_SCALE: f64 = 0.25;
 
 lazy_static! {
     static ref GLOBAL_SCOPE_IDENTS: Vec<Ident> = GLOBAL_SCOPE.iter().map(|&s| Ident { id: s.into(), raw_span: Span(0, 0) }).collect();
@@ -454,6 +454,13 @@ impl<'a> Program<'a> {
             "towards" => {
                 check_usage(call, None, true, in_expr, Some(1))?;
                 *script += r#"<custom-block s="direction towards %obj">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</custom-block>";
+            }
+            "subtract-headings" => {
+                check_usage(call, None, true, in_expr, Some(2))?;
+                *script += r#"<custom-block s="angle change from %n to %n">"#;
+                self.generate_expr_script(script, scopes, &call.args[1])?;
                 self.generate_expr_script(script, scopes, &call.args[0])?;
                 *script += "</custom-block>";
             }

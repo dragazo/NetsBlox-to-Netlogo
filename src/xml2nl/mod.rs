@@ -298,6 +298,12 @@ impl Program {
                         let obj = self.parse_script_recursive(&script.children[0])?;
                         Ok(format!("(towards {})", obj))
                     }
+                    "angle change from %n to %n" => {
+                        if script.children.len() != 2 { return Err(Error::InvalidProject); }
+                        let from = self.parse_script_recursive(&script.children[0])?;
+                        let to = self.parse_script_recursive(&script.children[1])?;
+                        Ok(format!("(subtract-headings {} {})", to, from)) // yes, these should be backwards
+                    }
 
                     "removeClone" => Ok("die".into()),
                     "xPosition" | "x position" => Ok("xcor".into()),
