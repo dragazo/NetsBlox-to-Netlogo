@@ -444,6 +444,19 @@ impl<'a> Program<'a> {
                 self.generate_expr_script(script, scopes, &call.args[0])?;
                 *script += "</custom-block>";
             }
+            "towardsxy" => {
+                check_usage(call, None, true, in_expr, Some(2))?;
+                *script += r#"<custom-block s="direction towards x: %n y: %n">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                self.generate_expr_script(script, scopes, &call.args[1])?;
+                *script += "</custom-block>";
+            }
+            "towards" => {
+                check_usage(call, None, true, in_expr, Some(1))?;
+                *script += r#"<custom-block s="direction towards %obj">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</custom-block>";
+            }
             x => match self.funcs.get(x) {
                 None => return Err(ErrorKind::FunctionNotDefined { name: call.name.clone(), suggested: SUGGESTIONS.get(x).copied() }),
                 Some(func) => {

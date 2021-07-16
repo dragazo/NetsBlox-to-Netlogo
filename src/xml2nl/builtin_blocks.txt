@@ -32,6 +32,8 @@ asker
 current patch
 distance from x: %'x' y: %'y'
 distance from %'sprite'
+direction towards x: %'x' y: %'y'
+direction towards %'sprite'
 
 set patch %'name' to %'value'
 change patch %'name' by %'value'

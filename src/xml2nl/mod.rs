@@ -285,6 +285,17 @@ impl Program {
                         let obj = self.parse_script_recursive(&script.children[0])?;
                         Ok(format!("(distance {})", obj))
                     }
+                    "direction towards x: %n y: %n" => {
+                        if script.children.len() != 2 { return Err(Error::InvalidProject); }
+                        let x = self.parse_script_recursive(&script.children[0])?;
+                        let y = self.parse_script_recursive(&script.children[1])?;
+                        Ok(format!("(towardsxy {} {})", x, y))
+                    }
+                    "direction towards %obj" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidProject); }
+                        let obj = self.parse_script_recursive(&script.children[0])?;
+                        Ok(format!("(towards {})", obj))
+                    }
 
                     "removeClone" => Ok("die".into()),
                     "xPosition" | "x position" => Ok("xcor".into()),

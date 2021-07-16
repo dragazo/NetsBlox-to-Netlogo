@@ -84,6 +84,10 @@ to go
                 let fg self
                 set fg myself
             ]
+            if t != self [
+                set dd towardsxy 0 0
+                set dd towards t
+            ]
         ]
         if energy < 0 [
             ifelse (random-float 1) < 0.1 [ die ] [

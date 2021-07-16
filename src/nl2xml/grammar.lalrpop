@@ -24,14 +24,14 @@ RawUnaryFunc = {
     "forward", "fd", "right", "rt", "left", "lt",
     "random", "random-float",
     "any?", "one-of", "other",
-    "distance",
+    "distance", "towards",
     "min", "max", "sum", "mean",
     "abs", "sin", "cos", "tan", "asin", "acos", "sqrt", "ln", "log", "floor", "ceiling",
 };
 UnaryFunc: Ident = <l:@L> <name:RawUnaryFunc> <r:@R> => Ident { id: clean_ident(name), raw_span: Span(l, r) };
 
 RawBinaryFunc = {
-    "setxy", "distancexy",
+    "setxy", "distancexy", "towardsxy",
     "atan",
 };
 BinaryFunc: Ident = <l:@L> <name:RawBinaryFunc> <r:@R> => Ident { id: clean_ident(name), raw_span: Span(l, r) };
