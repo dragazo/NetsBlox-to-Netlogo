@@ -4,6 +4,9 @@
 random-xcor <custom-block s="random x position"></custom-block>
 random-ycor <custom-block s="random y position"></custom-block>
 
+dx <custom-block s="dx of 1 step"></custom-block>
+dy <custom-block s="dy of 1 step"></custom-block>
+
 black <custom-block s="color %s"><l>black</l></custom-block>
 gray <custom-block s="color %s"><l>gray</l></custom-block>
 white <custom-block s="color %s"><l>white</l></custom-block>

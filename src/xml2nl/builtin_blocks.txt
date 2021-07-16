@@ -49,6 +49,8 @@ x position
 y position
 random x position
 random y position
+dx of 1 step
+dy of 1 step
 
 turtle set %'items'
 is %'set' empty? (turtle set)

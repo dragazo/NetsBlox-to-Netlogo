@@ -202,6 +202,8 @@ impl Program {
                     "reset everything" => Ok("clear-all".into()),
                     "random x position" => Ok("random-xcor".into()),
                     "random y position" => Ok("random-ycor".into()),
+                    "dx of 1 step" => Ok("dx".into()),
+                    "dy of 1 step" => Ok("dy".into()),
                     "self" => Ok("self".into()),
                     "asker" => Ok("myself".into()),
                     "pick random 0 up to %n" => {
