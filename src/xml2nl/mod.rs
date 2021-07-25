@@ -140,7 +140,6 @@ fn parse_xml_root<R: Read>(xml: &mut EventReader<R>, root_name: OwnedName, root_
 #[derive(Debug)]
 struct Entity {
     plural: String,
-    singular: String,
     props: LinkedHashMap<String, ()>,
 }
 #[derive(Debug)]
@@ -156,6 +155,8 @@ struct Program {
     globals: Vec<String>,
     entities: LinkedHashMap<String, Entity>,
     functions: LinkedHashMap<String, Function>,
+
+    metadata: MetaData,
 }
 impl Program {
     fn parse_bin_op_recursive(&mut self, op: &str, parent: &XML) -> Result<String, Error> {
@@ -717,13 +718,15 @@ impl Program {
 }
 impl Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if !self.globals.is_empty() {
-            writeln!(f, "globals [ {} ]\n", Punctuated(self.globals.iter(), ", "))?;
+        let true_globals: Vec<_> = self.globals.iter().filter(|g| !self.metadata.gui_vars.contains(g.as_str())).collect();
+        if !true_globals.is_empty() {
+            writeln!(f, "globals [ {} ]\n", Punctuated(true_globals.iter(), ", "))?;
         }
 
         for breed in self.entities.values() {
             if breed.plural == "patches" { continue }
-            writeln!(f, "breed [ {} {} ]", breed.plural, breed.singular)?;
+            let singular = self.metadata.breed_singulars.get(breed.plural.as_str());
+            writeln!(f, "breed [ {} {} ]", breed.plural, singular.unwrap_or(&format!("a-{}", breed.plural)))?;
         }
         writeln!(f)?;
 
@@ -803,7 +806,6 @@ fn parse_function_body(program: &mut Program, block: &XML) -> Result<(), Error> 
 }
 fn parse_sprite(program: &mut Program, sprite: &XML) -> Result<(), Error> {
     let plural = clean_name(&surely(sprite.attr("name"))?.value)?;
-    let singular = format!("a-{}", plural); // currently there's no metadata for singular form
 
     let mut props = LinkedHashMap::new();
     for var in surely(sprite.get(&["variables"]))?.children.iter() {
@@ -811,7 +813,7 @@ fn parse_sprite(program: &mut Program, sprite: &XML) -> Result<(), Error> {
         if props.insert(name, ()).is_some() { return Err(Error::InvalidProject); }
     }
 
-    let entity = Entity { plural: plural.clone(), singular, props };
+    let entity = Entity { plural: plural.clone(), props };
     if let Some(_) = program.entities.insert(plural.clone(), entity) {
         return Err(Error::SpritesWithSameName(plural));
     }
@@ -845,12 +847,21 @@ fn parse_project(room: &XML) -> Result<String, Error> {
     let blocks = surely(room.get(&["role", "project", "blocks"]))?;
     for block in blocks.children.iter() {
         let t = surely(block.attr("s"))?.value.as_str();
-        if BUILTIN_BLOCKS.contains(t) { continue }
+        if t == "__meta" {
+            let js = surely(block.get(&["script", "block", "block", "block", "l"]))?.text.trim();
+            if !js.starts_with("return") || !js.ends_with(";") { return Err(Error::InvalidProject) }
+            program.metadata = match serde_json::from_str(&js[6..js.len()-1]) {
+                Ok(v) => v,
+                Err(_) => return Err(Error::InvalidProject),
+            };
+            continue
+        }
+        else if BUILTIN_BLOCKS.contains(t) { continue }
         parse_function_header(&mut program, block)?;
     }
     for block in blocks.children.iter() {
         let t = surely(block.attr("s"))?.value.as_str();
-        if BUILTIN_BLOCKS.contains(t) { continue }
+        if t == "__meta" || BUILTIN_BLOCKS.contains(t) { continue }
         parse_function_body(&mut program, block)?;
     }
 

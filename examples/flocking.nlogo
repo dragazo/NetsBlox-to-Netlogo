@@ -1,4 +1,10 @@
-globals [population minimum-separation vision max-separate-turn max-align-turn max-cohere-turn]
+;@guivar population 20
+;@guivar minimum-separation 0.2
+;@guivar vision 2
+;@guivar max-separate-turn 10
+;@guivar max-align-turn 10
+;@guivar max-cohere-turn (list 10 "hello" (list 1 2 3 4) (list) "derp")
+globals []
 
 breed [birds bird]
 
@@ -9,14 +15,6 @@ turtles-own [
 
 to setup
   clear-all
-
-  set population 20
-  set minimum-separation 0
-  set vision 2
-  set max-separate-turn 10
-  set max-align-turn 10
-  set max-cohere-turn 10
-
   create-birds population
     [ set color (list (217 + random 20) (217 + random 20) 49);set color yellow - 2 + random 7  ;; random shades look nice
       set size 1.5  ;; easier to see

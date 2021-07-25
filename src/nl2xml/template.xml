@@ -40,6 +40,8 @@
 {variables}
             </variables>
             <blocks>
+<block-definition s="__meta" type="reporter" category="variables"><inputs></inputs><script><block s="doReport"><block s="evaluate"><block s="reportJSFunction"><list></list><l>return {metadata_json};</l></block><list></list></block></block></script></block-definition>
+
 <block-definition s="script variable %&apos;a&apos; = %&apos;value&apos;" type="command" category="other"><inputs><input type="%upvar"></input><input type="%s"></input></inputs><script><block s="doSetVar"><l>a</l><block var="value"/></block></script></block-definition>
 
 <block-definition s="%&apos;a&apos; xor %&apos;b&apos;" type="predicate" category="operators"><inputs><input type="%b"></input><input type="%b"></input></inputs><script><block s="doReport"><block s="reportEquals"><block s="reportNot"><block s="reportNot"><block var="a"/></block></block><block s="reportNot"><block var="b"/></block></block></block></script></block-definition>

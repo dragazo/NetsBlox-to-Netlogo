@@ -5,20 +5,15 @@ grammar;
 pub Program = Item*;
 
 match {
-    r";[^\n\r]*[\n\r]*" => {},
+    r";[^@][^\n\r]*" => {},
     r"\s+" => {},
     r"create-ordered-[\p{alpha}.?=*!<>:#+/%_^'&-][\p{alpha}\p{digit}.?=*!<>:#+/%_^'&-]*" => "CREATE-ORDERED-IDENT",
-    r"-?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?",
-}
-else {
+    r"-?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?" => "NUMBER",
+} else {
     r"create-[\p{alpha}.?=*!<>:#+/%_^'&-][\p{alpha}\p{digit}.?=*!<>:#+/%_^'&-]*" => "CREATE-IDENT",
-}
-else {
+} else {
     r"[\p{alpha}.?=*!<>:#+/%_^'&-][\p{alpha}\p{digit}.?=*!<>:#+/%_^'&-]*-own" => "IDENT-OWN",
-}
-else {
-    _
-}
+} else { _ }
 
 RawUnaryFunc = {
     "forward", "fd", "right", "rt", "left", "lt",
@@ -44,7 +39,7 @@ Item: Item = {
     Function => Item::Function(<>),
 };
 
-Globals: Globals = <l:@L> "globals" "[" <idents:Ident*> "]" <r:@R> => Globals { idents, raw_span: Span(l, r) };
+Globals: Globals = <annotations:Annotation*> <l:@L> "globals" "[" <idents:Ident*> "]" <r:@R> => Globals { annotations, idents, raw_span: Span(l, r) };
 Breed: Breed = <l:@L> "breed" "[" <plural:Ident> <singular:Ident> "]" <r:@R> => Breed { plural, singular, raw_span: Span(l, r) };
 Own: Own = {
     <l:@L> <owner:"IDENT-OWN"> "[" <props:Ident*> "]" <r:@R> => {
@@ -167,6 +162,14 @@ Value: Value = {
 };
 
 Ident: Ident = <l:@L> <v:r"[\p{alpha}.?=*!<>:#+/%_^'&-][\p{alpha}\p{digit}.?=*!<>:#+/%_^'&-]*"> <r:@R> => Ident { id: clean_ident(v), raw_span: Span(l, r) };
-Number: Number = <l:@L> <v:r"-?[0-9]+(\.[0-9]*)?([eE][+-]?[0-9]+)?"> <r:@R> => Number { value: String::from(v), raw_span: Span(l, r) };
+Number: Number = <l:@L> <v:"NUMBER"> <r:@R> => Number { value: String::from(v), raw_span: Span(l, r) };
 Text: Text = <l:@L> <v:r#""(\\[\\nrt"']|[^\\"\r\n])*""#> <r:@R> => Text { content: clean_string(v), raw_span: Span(l, r) };
 List: List = <l:@L> "(" "list" <values:Expr*> ")" <r:@R> => List { values, raw_span: Span(l, r) };
+
+// -------------------------------------- //
+// -- annotation stuff (meta-langauge) -- //
+// -------------------------------------- //
+
+Annotation: Annotation = {
+    <l:@L> ";@guivar" <ident:Ident> <value:Expr> => Annotation::GuiVar { ident, value, lspan: l },
+};

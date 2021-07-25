@@ -5,7 +5,7 @@ lalrpop_mod!(grammar, "/nl2xml/grammar.rs");
 use lalrpop_util::ParseError;
 use lalrpop_util::lexer::Token;
 
-fn clean_ident(s: &str) -> String {
+pub fn clean_ident(s: &str) -> String {
     s.to_lowercase()
 }
 fn clean_string(s: &str) -> String {
@@ -54,6 +54,18 @@ macro_rules! raw_span_impl {
 }
 
 #[derive(Debug, Clone)]
+pub enum Annotation {
+    GuiVar { ident: Ident, value: Expr, lspan: usize },
+}
+impl Spanned for Annotation {
+    fn span(&self) -> Span {
+        match self {
+            Annotation::GuiVar { lspan, value, .. } => Span(*lspan, value.span().1),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Item {
     Globals(Globals),
     Breed(Breed),
@@ -71,7 +83,7 @@ impl Spanned for Item {
     }
 }
 
-#[derive(Debug, Clone)] pub struct Globals { pub idents: Vec<Ident>, pub raw_span: Span }
+#[derive(Debug, Clone)] pub struct Globals { pub annotations: Vec<Annotation>, pub idents: Vec<Ident>, pub raw_span: Span }
 #[derive(Debug, Clone)] pub struct Breed { pub plural: Ident, pub singular: Ident, pub raw_span: Span }
 #[derive(Debug, Clone)] pub struct Own { pub plural_owner: Ident, pub props: Vec<Ident>, pub raw_span: Span }
 #[derive(Debug, Clone)] pub struct Function { pub name: Ident, pub params: Vec<Ident>, pub reports: bool, pub stmts: Vec<Stmt>, pub raw_span: Span }

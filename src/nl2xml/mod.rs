@@ -79,6 +79,12 @@ enum ErrorKind<'a> {
     UnreachableCode { func: Ident, unreachable_span: Span },
 
     MissingRequiredFunc { name: &'static str, reports: bool, params: &'static [&'static str] },
+
+    NotConstexpr { expr_span: Span },
+
+    // annotation errors (meta language)
+
+    UnknownAnnotationForItem { annotation_span: Span, allowed: &'static [&'static str] },
 }
 impl<'a> From<ParseError<usize, Token<'a>, &'a str>> for ErrorKind<'a> {
     fn from(e: ParseError<usize, Token<'a>, &'a str>) -> Self {
@@ -213,6 +219,12 @@ impl Display for Error<'_> {
             ErrorKind::MissingRequiredFunc { name, reports, params } => {
                 self.write_error(f, "missing required function", None, Some(&format!("expected a function with signature '{} {} [ {} ] end", if *reports { "to-report" } else { "to" }, name, Punctuated(params.iter(), " "))))?
             }
+
+            ErrorKind::NotConstexpr { expr_span } => self.write_error(f, "expected a constant expression", Some(*expr_span), Some("constant expressions are numbers, strings, or lists of constant expressions"))?,
+
+            // annotation errors (meta language)
+
+            ErrorKind::UnknownAnnotationForItem { annotation_span, allowed } => self.write_error(f, "unknown annotation for this item", Some(*annotation_span), Some(&format!("allowed annotations: {}", Punctuated(allowed.iter(), " "))))?,
         }
         Ok(())
     }
@@ -228,13 +240,15 @@ enum StorageLocation<'a> {
     FunctionName { func: &'a Function, is_builtin: bool },
 }
 
-#[derive(Default)]
-struct EntityInfo<'a> { props: BTreeMap<&'a str, &'a Ident> } // btree so we get sorted order
+struct EntityInfo<'a> {
+    props: BTreeMap<&'a str, &'a Ident>, // btree so we get sorted order
+    singular: &'a str,
+    plural: &'a str,
+}
 
-struct GlobalSymbol<'a> { ident: &'a Ident }
+struct GlobalSymbol<'a> { ident: &'a Ident, gui_var_value: Option<&'a Expr> } // gui_var_value is None iff not gui var
 struct BreedSymbol<'a> { ident: &'a Ident, is_plural: bool, info: Rc<RefCell<EntityInfo<'a>>> }
 
-#[derive(Default)]
 pub struct Program<'a> {
     globals: LinkedHashMap<&'a str, GlobalSymbol<'a>>,
     breeds: LinkedHashMap<&'a str, BreedSymbol<'a>>,
@@ -244,6 +258,17 @@ pub struct Program<'a> {
     all_breed_props: HashMap<&'a str, &'a Ident>,
 }
 impl<'a> Program<'a> {
+    fn new() -> Self {
+        Program {
+            globals: Default::default(),
+            breeds: Default::default(),
+            funcs: Default::default(),
+            patches: EntityInfo { props: Default::default(), plural: "patches", singular: "patch" },
+
+            all_breed_props: Default::default(),
+        }
+    }
+
     // checks for validity in (only) the global scope
     fn validate_define_global<'b>(&self, ident: &Ident) -> Result<(), ErrorKind<'b>> {
         let id = ident.id.as_str();
@@ -479,6 +504,23 @@ impl<'a> Program<'a> {
         }
         Ok(())
     }
+    fn generate_constexpr_script<'b>(&self, script: &mut String, expr: &Expr) -> Result<(), ErrorKind<'b>> {
+        match expr {
+            Expr::Value(Value::Number(x)) => write!(script, "<l>{}</l>", x.value).unwrap(),
+            Expr::Value(Value::Text(x)) => write!(script, "<l>{}</l>", x.content).unwrap(),
+            Expr::Value(Value::List(x)) => {
+                *script += r#"<list>"#;
+                for value in x.values.iter() {
+                    *script += "<item>";
+                    self.generate_constexpr_script(script, value)?;
+                    *script += "</item>";
+                }
+                *script += "</list>";
+            }
+            _ => return Err(ErrorKind::NotConstexpr { expr_span: expr.span() }),
+        }
+        Ok(())
+    }
     fn generate_expr_script<'b>(&self, script: &mut String, scopes: &mut Vec<LinkedHashMap<&str, &Ident>>, expr: &Expr) -> Result<(), ErrorKind<'b>> {
         match expr {
             Expr::Choice { condition, a, b, .. } => { *script += r#"<block s="reportIfElse">"#; self.generate_expr_script(script, scopes, condition)?; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>" }
@@ -680,18 +722,29 @@ impl<'a> Program<'a> {
         Ok(())
     }
     fn init_global<'b>(items: &[Item]) -> Result<Program, ErrorKind<'b>> {
-        let mut program = Program::default();
+        let mut program = Program::new();
         let mut owns: Vec<&Own> = Vec::with_capacity(16);
 
         // initial pass - collect all the globals, breeds, and functions (names at global scope)
         for item in items {
             match item {
-                Item::Globals(Globals { idents, .. }) => for ident in idents {
-                    program.validate_define_global(ident)?;
-                    assert!(program.globals.insert(&ident.id, GlobalSymbol { ident }).is_none());
+                Item::Globals(Globals { annotations, idents, .. }) => {
+                    for annotation in annotations {
+                        match annotation {
+                            Annotation::GuiVar { ident, value, .. } => {
+                                program.validate_define_global(ident)?;
+                                assert!(program.globals.insert(&ident.id, GlobalSymbol { ident, gui_var_value: Some(value) }).is_none());
+                            }
+                            _ => return Err(ErrorKind::UnknownAnnotationForItem { annotation_span: annotation.span(), allowed: &["guivar"] })
+                        }
+                    }
+                    for ident in idents {
+                        program.validate_define_global(ident)?;
+                        assert!(program.globals.insert(&ident.id, GlobalSymbol { ident, gui_var_value: None }).is_none());
+                    }
                 }
                 Item::Breed(Breed { plural, singular, .. }) => {
-                    let info = Rc::new(RefCell::new(EntityInfo::default()));
+                    let info = Rc::new(RefCell::new(EntityInfo { props: Default::default(), plural: &plural.id, singular: &singular.id }));
                     for (ident, is_plural) in [(plural, true), (singular, false)] {
                         program.validate_define_global(&ident)?;
                         assert!(program.breeds.insert(&ident.id, BreedSymbol { ident, is_plural, info: info.clone() }).is_none());
@@ -816,7 +869,14 @@ fn parse_private<'b>(project_name: &str, input: &'b str) -> Result<String, Error
         write!(variables, r#"<variable name="{}"><list struct="atomic"></list></variable>"#, breed.ident.id.as_str()).unwrap();
     }
     for global in program.globals.values() {
-        write!(variables, r#"<variable name="{}"><l>0</l></variable>"#, global.ident.id).unwrap();
+        match global.gui_var_value {
+            None => write!(variables, r#"<variable name="{}"><l>0</l></variable>"#, global.ident.id).unwrap(),
+            Some(value) => {
+                write!(variables, r#"<variable name="{}">"#, global.ident.id).unwrap();
+                program.generate_constexpr_script(&mut variables, value)?;
+                variables += "</variable>";
+            }
+        }
     }
     scopes.push(root_scope);
 
@@ -840,6 +900,13 @@ fn parse_private<'b>(project_name: &str, input: &'b str) -> Result<String, Error
         write!(patches_props, r#"<variable name="{}"><l>0</l></variable>"#, prop).unwrap();
     }
 
+    let breed_singulars: HashMap<_, _> = program.breeds.values().filter(|b| b.is_plural).map(|b| {
+        let info = b.info.borrow();
+        (info.plural.to_owned(), info.singular.to_owned())
+    }).collect();
+    let gui_vars: HashSet<_> = program.globals.values().filter(|g| g.gui_var_value.is_some()).map(|v| v.ident.id.clone()).collect();
+    let metadata = MetaData { breed_singulars, gui_vars };
+
     let stage_size = 495;    // both width and height
     let patches_radius = 16; // patches range from [-r, r] for both axes
     let patches_dim = patches_radius * 2 + 1;
@@ -856,8 +923,9 @@ fn parse_private<'b>(project_name: &str, input: &'b str) -> Result<String, Error
         base_sprite_scale = BASE_SPRITE_SCALE,
         variables = variables,
         patches_props = patches_props,
-        plural_breed_names = escape_xml(&Punctuated(program.breeds.values().filter(|b| b.is_plural).map(|b| &b.ident.id), "\r").to_string()),
+        plural_breed_names = escape_xml(&Punctuated(plural_breed_names.iter(), "\r").to_string()),
         patch_props = escape_xml(&Punctuated(["color"].iter().chain(program.patches.props.keys()), "\r").to_string()),
+        metadata_json = serde_json::to_string_pretty(&metadata).unwrap(),
     ))
 }
 pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>> {
@@ -866,6 +934,11 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
 
 #[test] fn test_prog_header() {
     let items = ast::parse(r#"
+    ;@guivar num 40
+    ;@guivar str "hello world"
+    ;@guivar lst (list 1 2 3)
+    globals [grd]
+
     breed [goats goat]
     breed [merps merp]
     turtles-own [ mtdews ]
@@ -877,6 +950,21 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
     end
     "#).unwrap();
     let res = Program::init_global(&items).unwrap();
+
+    assert_eq!(res.globals.len(), 4);
+    assert!(res.globals.get("grd").unwrap().gui_var_value.is_none());
+    match res.globals.get("num").unwrap().gui_var_value.as_ref().unwrap() {
+        Expr::Value(Value::Number(x)) => assert_eq!(x.value, "40"),
+        x => panic!("{:?}", x),
+    }
+    match res.globals.get("str").unwrap().gui_var_value.as_ref().unwrap() {
+        Expr::Value(Value::Text(x)) => assert_eq!(x.content, "hello world"),
+        x => panic!("{:?}", x),
+    }
+    match res.globals.get("lst").unwrap().gui_var_value.as_ref().unwrap() {
+        Expr::Value(Value::List(x)) => assert_eq!(x.values.len(), 3),
+        x => panic!("{:?}", x),
+    }
 
     assert_eq!(res.breeds.len(), 4);
     

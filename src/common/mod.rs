@@ -1,5 +1,7 @@
 use std::collections::{HashSet, HashMap};
 
+use serde::{Serialize, Deserialize};
+
 pub fn parse_idents(input: &str) -> HashSet<&str> {
     let mut s = HashSet::new();
     for line in input.lines() {
@@ -52,4 +54,10 @@ lazy_static! {
     pub static ref RESERVED_WORDS: HashSet<&'static str> = parse_idents(include_str!("reserved.txt"));
     pub static ref NL2NB_PATCH_PROP_RENAMES: HashMap<&'static str, &'static str> = parse_ws_rest(include_str!("patch-prop-renames.txt"));
     pub static ref NB2NL_PATCH_PROP_RENAMES: HashMap<&'static str, &'static str> = reverse_mapping(&NL2NB_PATCH_PROP_RENAMES);
+}
+
+#[derive(Default, Debug, Serialize, Deserialize)]
+pub struct MetaData {
+    pub breed_singulars: HashMap<String, String>,
+    pub gui_vars: HashSet<String>,
 }
