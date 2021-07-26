@@ -54,7 +54,7 @@ fn get_func_name(func: &Function) -> String {
 
 #[derive(Debug)]
 enum ErrorKind<'a> {
-    Parse(ParseError<usize, Token<'a>, &'a str>),
+    Parse(ParseError<usize, Token<'a>, AstError>),
     FuncHeaderHadApos { func: Ident, name: Ident },
 
     Redefine { name: Ident, previous: Ident },
@@ -86,8 +86,8 @@ enum ErrorKind<'a> {
 
     UnknownAnnotationForItem { annotation_span: Span, allowed: &'static [&'static str] },
 }
-impl<'a> From<ParseError<usize, Token<'a>, &'a str>> for ErrorKind<'a> {
-    fn from(e: ParseError<usize, Token<'a>, &'a str>) -> Self {
+impl<'a> From<ParseError<usize, Token<'a>, AstError>> for ErrorKind<'a> {
+    fn from(e: ParseError<usize, Token<'a>, AstError>) -> Self {
         ErrorKind::Parse(e)
     }
 }
@@ -164,7 +164,9 @@ impl Display for Error<'_> {
                 ParseError::UnrecognizedEOF { location, .. } => self.write_error(f, "unexpected end of file", Some(Span(*location, location + 1)), None)?,
                 ParseError::UnrecognizedToken { token, .. } => self.write_error(f, "unexpected token", Some(Span(token.0, token.2)), None)?,
                 ParseError::ExtraToken { token } => self.write_error(f, "found extra token", Some(Span(token.0, token.2)), None)?,
-                ParseError::User { .. } => unreachable!(),
+                ParseError::User { error } => match error {
+                    AstError::ParseFloat { problem_span } => self.write_error(f, "failed to parse float", Some(*problem_span), None)?,
+                }
             }
             ErrorKind::FuncHeaderHadApos { name, .. } => self.write_error(f, &format!("function header had invalid symbol: {}", name.id), Some(name.span()), Some("function names and parameters may not contain apostrophes"))?,
             
@@ -242,6 +244,7 @@ enum StorageLocation<'a> {
 
 struct EntityInfo<'a> {
     props: BTreeMap<&'a str, &'a Ident>, // btree so we get sorted order
+    placeins: Vec<(&'a Function, &'a PlaceIn)>,
     singular: &'a str,
     plural: &'a str,
 }
@@ -263,7 +266,7 @@ impl<'a> Program<'a> {
             globals: Default::default(),
             breeds: Default::default(),
             funcs: Default::default(),
-            patches: EntityInfo { props: Default::default(), plural: "patches", singular: "patch" },
+            patches: EntityInfo { props: Default::default(), placeins: Default::default(), plural: "patches", singular: "patch" },
 
             all_breed_props: Default::default(),
         }
@@ -724,6 +727,7 @@ impl<'a> Program<'a> {
     fn init_global<'b>(items: &[Item]) -> Result<Program, ErrorKind<'b>> {
         let mut program = Program::new();
         let mut owns: Vec<&Own> = Vec::with_capacity(16);
+        let mut placeins: Vec<(&Function, &PlaceIn)> = Vec::with_capacity(16);
 
         // initial pass - collect all the globals, breeds, and functions (names at global scope)
         for item in items {
@@ -731,7 +735,7 @@ impl<'a> Program<'a> {
                 Item::Globals(Globals { annotations, idents, .. }) => {
                     for annotation in annotations {
                         match annotation {
-                            Annotation::GuiVar { ident, value, .. } => {
+                            Annotation::GuiVar(GuiVar { ident, value, .. }) => {
                                 program.validate_define_global(ident)?;
                                 assert!(program.globals.insert(&ident.id, GlobalSymbol { ident, gui_var_value: Some(value) }).is_none());
                             }
@@ -744,7 +748,7 @@ impl<'a> Program<'a> {
                     }
                 }
                 Item::Breed(Breed { plural, singular, .. }) => {
-                    let info = Rc::new(RefCell::new(EntityInfo { props: Default::default(), plural: &plural.id, singular: &singular.id }));
+                    let info = Rc::new(RefCell::new(EntityInfo { props: Default::default(), placeins: Default::default(), plural: &plural.id, singular: &singular.id }));
                     for (ident, is_plural) in [(plural, true), (singular, false)] {
                         program.validate_define_global(&ident)?;
                         assert!(program.breeds.insert(&ident.id, BreedSymbol { ident, is_plural, info: info.clone() }).is_none());
@@ -752,6 +756,12 @@ impl<'a> Program<'a> {
                 }
                 Item::Function(func) => {
                     program.validate_define_global(&func.name)?;
+                    for annotation in func.annotations.iter() {
+                        match annotation {
+                            Annotation::PlaceIn(x) => placeins.push((func, x)), // gather them up for later when all breeds have been defined
+                            _ => return Err(ErrorKind::UnknownAnnotationForItem { annotation_span: annotation.span(), allowed: &["placein"] })
+                        }
+                    }
                     assert!(program.funcs.insert(&func.name.id, func).is_none());
                 }
                 Item::Own(own) => match own.plural_owner.id.as_str() {
@@ -760,38 +770,49 @@ impl<'a> Program<'a> {
                 }
             }
         }
+
+        fn apply_to_breeds<'a, 'b, F: Fn(&mut EntityInfo<'a>) -> Result<(), ErrorKind<'b>>>(program: &mut Program<'a>, target: &Ident, apply: F) -> Result<(), ErrorKind<'b>> {
+            match target.id.as_str() {
+                "turtles" => for breed in program.breeds.values().filter(|s| s.is_plural) {
+                    apply(&mut *breed.info.borrow_mut())?
+                },
+                "patches" => apply(&mut program.patches)?,
+                "turtle" | "patch" => return Err(ErrorKind::ExpectedPlural { name: target.clone() }),
+                x => match program.breeds.get(x) {
+                    None => return Err(ErrorKind::BreedNotDefined { name: target.clone() }),
+                    Some(breed) => {
+                        if !breed.is_plural { return Err(ErrorKind::ExpectedPlural { name: target.clone() }) }
+                        apply(&mut *breed.info.borrow_mut())?;
+                    }
+                }
+            }
+            Ok(())
+        }
+
         // process all the own drectives we stored
         for own in owns {
-            fn add_props<'a, 'b>(target: &mut BTreeMap<&'a str, &'a Ident>, props: &'a [Ident]) -> Result<(), ErrorKind<'b>> {
-                for prop in props {
-                    if let Some(prev) = target.insert(&prop.id, prop) {
+            for prop in own.props.iter() {
+                program.validate_define_global(prop)?; // validate the names once up-front
+            }
+            apply_to_breeds(&mut program, &own.plural_owner, |target| {
+                for prop in &own.props {
+                    if let Some(prev) = target.props.insert(&prop.id, prop) {
                         return Err(ErrorKind::Redefine { name: prop.clone(), previous: prev.clone() })
                     }
                 }
                 Ok(())
-            }
-            
-            for prop in own.props.iter() {
-                program.validate_define_global(prop)?; // validate the names once up-front
-            }
-            match own.plural_owner.id.as_str() {
-                "turtles" => for target in program.breeds.values().filter(|s| s.is_plural) {
-                    add_props(&mut target.info.borrow_mut().props, &own.props)?;
-                },
-                "patches" => add_props(&mut program.patches.props, &own.props)?,
-                "turtle" | "patch" => return Err(ErrorKind::ExpectedPlural { name: own.plural_owner.clone() }),
-                x => match program.breeds.get(x) {
-                    None => return Err(ErrorKind::BreedNotDefined { name: own.plural_owner.clone() }),
-                    Some(target) => {
-                        if !target.is_plural { return Err(ErrorKind::ExpectedPlural { name: own.plural_owner.clone() }) }
-                        add_props(&mut target.info.borrow_mut().props, &own.props)?;
-                    }
-                }
-            }
+            })?;
         }
         // gather up all the owns into one set for storage location resolution
         for breed in program.breeds.values() {
             program.all_breed_props.extend(breed.info.borrow().props.iter());
+        }
+        // go through all of the placein annotations we stored
+        for (func, placein) in placeins {
+            apply_to_breeds(&mut program, &placein.sprite, |target| {
+                target.placeins.push((func, placein)); // just toss these over there, and it'll format them for us later
+                Ok(())
+            })?;
         }
 
         Ok(program) // we're now in a semi-valid state (at least at the global scope)
@@ -817,9 +838,16 @@ fn parse_breed_sprite<'b>(breed_sprites: &mut String, breed: &BreedSymbol, index
     }
 
     *breed_sprites += "</variables><scripts>";
-    
     *breed_sprites += r#"<script x="20" y="20"><block s="receiveMessage"><l>delete</l></block><block s="removeClone"></block></script>"#;
-
+    write!(breed_sprites, r#"<script x="20" y="100"><custom-block s="tell %l to %cs"><block var="{}"/><script></script></custom-block><custom-block s="update background"></custom-block></script>"#, escaped_name).unwrap();
+    for (func, placein) in breed.info.borrow().placeins.iter() {
+        write!(breed_sprites, r#"<script x="{x}" y="{y}"><custom-block s="{block_name}">{params}{comment}</custom-block></script>"#,
+            x = placein.x, y = placein.y,
+            block_name = get_func_name(func),
+            params = Punctuated(iter::once("<l></l>").cycle().take(func.params.len()), ""), // pass nothing by default
+            comment = placein.comment.as_ref().map(|c| format!(r#"<comment w="200" collapsed="false">{}</comment>"#, escape_xml(&c.content))).unwrap_or(String::new()),
+        ).unwrap();
+    }
     *breed_sprites += "</scripts></sprite>";
 
     Ok(())

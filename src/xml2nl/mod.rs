@@ -197,6 +197,8 @@ impl Program {
                     x @ "is %obj alive?" => return Err(Error::UseOfInternalBlock(x.to_string())),
                     "%n clones" | "%n new %s" | "%n new %s (ordered)" => return Err(Error::CreateOutsideOfTell),
 
+                    "update background" => Ok(String::new()), // this is done automatically in netlogo, so it can compile into nothing
+
                     "delete all clones" => Ok("clear-turtles".into()),
                     "reset patches" => Ok("clear-patches".into()),
                     "reset global variables" => Ok("clear-globals".into()),

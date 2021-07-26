@@ -34,6 +34,11 @@ fn clean_string(s: &str) -> String {
     res
 }
 
+#[derive(Debug)]
+pub enum AstError {
+    ParseFloat { problem_span: Span },
+}
+
 /// Source location of a program construct.
 /// 
 /// This is given as byte offsets into the program.
@@ -53,14 +58,22 @@ macro_rules! raw_span_impl {
     )+}
 }
 
+#[derive(Debug, Clone)] pub struct GuiVar { pub ident: Ident, pub value: Expr, pub lspan: usize }
+#[derive(Debug, Clone)] pub struct PlaceIn { pub sprite: Ident, pub x: f64, pub y: f64, pub comment: Option<Text>, pub raw_span: Span }
+
+impl Spanned for GuiVar { fn span(&self) -> Span { Span(self.lspan, self.value.span().1) } }
+raw_span_impl! { PlaceIn }
+
 #[derive(Debug, Clone)]
 pub enum Annotation {
-    GuiVar { ident: Ident, value: Expr, lspan: usize },
+    GuiVar(GuiVar),
+    PlaceIn(PlaceIn),
 }
 impl Spanned for Annotation {
     fn span(&self) -> Span {
         match self {
-            Annotation::GuiVar { lspan, value, .. } => Span(*lspan, value.span().1),
+            Annotation::GuiVar(x) => x.span(),
+            Annotation::PlaceIn(x) => x.span(),
         }
     }
 }
@@ -86,7 +99,14 @@ impl Spanned for Item {
 #[derive(Debug, Clone)] pub struct Globals { pub annotations: Vec<Annotation>, pub idents: Vec<Ident>, pub raw_span: Span }
 #[derive(Debug, Clone)] pub struct Breed { pub plural: Ident, pub singular: Ident, pub raw_span: Span }
 #[derive(Debug, Clone)] pub struct Own { pub plural_owner: Ident, pub props: Vec<Ident>, pub raw_span: Span }
-#[derive(Debug, Clone)] pub struct Function { pub name: Ident, pub params: Vec<Ident>, pub reports: bool, pub stmts: Vec<Stmt>, pub raw_span: Span }
+#[derive(Debug, Clone)] pub struct Function {
+    pub annotations: Vec<Annotation>,
+    pub name: Ident,
+    pub params: Vec<Ident>,
+    pub reports: bool,
+    pub stmts: Vec<Stmt>,
+    pub raw_span: Span,
+}
 
 raw_span_impl! { Globals, Breed, Own, Function }
 
@@ -245,7 +265,7 @@ impl Spanned for Value {
 
 raw_span_impl! { Ident, Number, Text, List }
 
-pub fn parse(program: &str) -> Result<Vec<Item>, ParseError<usize, Token, &str>> {
+pub fn parse(program: &str) -> Result<Vec<Item>, ParseError<usize, Token, AstError>> {
     grammar::ProgramParser::new().parse(program)
 }
 

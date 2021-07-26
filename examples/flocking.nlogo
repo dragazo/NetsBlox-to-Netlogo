@@ -34,6 +34,7 @@ to go
   tick
 end
 
+;@placein birds 250 35 "edit this custom block to change bird behavior!"
 to go-turtles
   ask turtles
   [
