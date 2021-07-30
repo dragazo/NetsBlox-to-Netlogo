@@ -48,6 +48,9 @@ to setup
         let temp color
         set size 0.5 + (random 1.5)
         let temp2 size
+        ht
+        st
+        set temp2 hidden?
     ]
 end
 to go

@@ -31,6 +31,9 @@
             <hidden>
 &#xD;&#xD; bounceOffEdge doGlide doGotoObject changeXPosition setXPosition changeYPosition setYPosition xPosition yPosition forward doFaceTowards gotoXY &#xD;&#xD;
 &#xD;&#xD; doFor receiveGo receiveKey receiveInteraction receiveCondition receiveMessage doBroadcast doBroadcastAndWait doSend getLastMessage doWarp doWait doWaitUntil doRun fork evaluate doTellTo reportAskFor doCallCC reportCallCC receiveOnClone createClone newClone doPauseAll doStopThis &#xD;&#xD;
+&#xD;&#xD; doSwitchToCostume doWearNextCostume getCostumeIdx doSayFor doThinkFor bubble doThink reportGetImageAttribute reportNewCostumeStretched reportNewCostume changeEffect setEffect clearEffects getEffect changeScale setScale getScale goToLayer goBack &#xD;&#xD;
+&#xD;&#xD; playSound doPlaySoundUntilDone doPlaySoundAtRate doStopAllSounds reportGetSoundAttribute reportNewSoundFromSamples doRest doPlayNote doPlayFrequency doSetInstrument doChangeTempo doSetTempo getTempo changeVolume setVolume getVolume changePan setPan getPan playFreq stopFreq reportSounds &#xD;&#xD;
+&#xD;&#xD; doRunRPC getJSFromRPC getJSFromRPCDropdown getJSFromRPCStruct getCostumeFromRPC reportRPCError doSocketRequest doSocketResponse doSocketMessage receiveSocketMessage getProjectId getProjectIds &#xD;&#xD;
             </hidden>
             <variables>
 <variable name="__context"><list struct="atomic"></list></variable>

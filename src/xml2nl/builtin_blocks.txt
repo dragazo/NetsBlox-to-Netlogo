@@ -1,8 +1,6 @@
 # a list of all the builtin blocks we generate in the netlogo -> netsblox direction (defined primarily in template.xml).
 # these will be ignored by the netsblox -> netlogo block-to-function conversions
 
-update background
-
 script variable %'a' = %'value'
 
 %'a' xor %'b'

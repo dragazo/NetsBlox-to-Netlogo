@@ -492,6 +492,14 @@ impl<'a> Program<'a> {
                 self.generate_expr_script(script, scopes, &call.args[0])?;
                 *script += "</custom-block>";
             }
+            "hide-turtle" | "ht" => {
+                check_usage(call, None, false, in_expr, Some(0))?;
+                *script += r#"<block s="hide"></block>"#;
+            }
+            "show-turtle" | "st" => {
+                check_usage(call, None, false, in_expr, Some(0))?;
+                *script += r#"<block s="show"></block>"#;
+            }
             x => match self.funcs.get(x) {
                 None => return Err(ErrorKind::FunctionNotDefined { name: call.name.clone(), suggested: SUGGESTIONS.get(x).copied() }),
                 Some(func) => {

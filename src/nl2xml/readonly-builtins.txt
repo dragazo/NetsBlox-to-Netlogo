@@ -29,3 +29,5 @@ nobody <custom-block s="nobody"></custom-block>
 
 self <custom-block s="self"></custom-block>
 myself <custom-block s="asker"></custom-block>
+
+hidden? <block s="reportNot"><block s="reportShown"></block></block>

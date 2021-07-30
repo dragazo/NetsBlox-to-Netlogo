@@ -19,7 +19,7 @@ lazy_static! {
         let mut res = HashSet::new();
         for line in include_str!("builtin_blocks.txt").lines().map(|s| s.trim()) {
             if line.is_empty() || line.starts_with('#') { continue }
-            assert!(res.insert(line));
+            if !res.insert(line) { panic!("duplicate entry: {}", line) }
         }
         res
     };
@@ -207,6 +207,9 @@ impl Program {
                     "dy of 1 step" => Ok("dy".into()),
                     "self" => Ok("self".into()),
                     "asker" => Ok("myself".into()),
+                    "hide" => Ok("hide-turtle".into()),
+                    "show" => Ok("show-turtle".into()),
+                    "reportShown" => Ok("(not hidden?)".into()),
                     "pick random 0 up to %n" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         let max = self.parse_script_recursive(&script.children[0])?;
