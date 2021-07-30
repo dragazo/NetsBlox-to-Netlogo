@@ -178,8 +178,8 @@ impl Display for Error<'_> {
             ErrorKind::BreedNotDefined { name } => self.write_error(f, &format!("breed does not exist: {}", name.id), Some(name.span()), Some("you can define breeds with 'breed [ plural singular ]'"))?,
             ErrorKind::VariableNoTDefined { name } => self.write_error(f, &format!("undefined variable: {}", name.id), Some(name.span()), Some("if this was meant to be a netlogo gui input, these are not currently supported"))?,
             ErrorKind::FunctionNotDefined { name, suggested } => {
-                let m = if let Some(s) = suggested { Some(format!("suggestion: {}", s)) } else { None };
-                self.write_error(f, &format!("undefined function: {}", name.id), Some(name.span()), m.as_ref().map(|s| s.as_str()))?
+                let m = suggested.map(|s| format!("suggestion: {}", s));
+                self.write_error(f, &format!("undefined function: {}", name.id), Some(name.span()), m.as_deref())?
             }
 
             ErrorKind::AssignToReadonlyVar { name } => self.write_error(f, &format!("assign to readonly variable: {}", name.id), Some(name.span()), None)?,
@@ -276,10 +276,10 @@ impl<'a> Program<'a> {
     fn validate_define_global<'b>(&self, ident: &Ident) -> Result<(), ErrorKind<'b>> {
         let id = ident.id.as_str();
         let prev = self.globals.get(id).map(|s| s.ident)
-            .or(self.breeds.get(id).map(|s| s.ident))
-            .or(self.funcs.get(id).map(|s| &s.name))
-            .or(self.patches.props.get(id).copied())
-            .or(self.all_breed_props.get(id).copied());
+            .or_else(|| self.breeds.get(id).map(|s| s.ident))
+            .or_else(|| self.funcs.get(id).map(|s| &s.name))
+            .or_else(|| self.patches.props.get(id).copied())
+            .or_else(|| self.all_breed_props.get(id).copied());
         if let Some(prev) = prev {
             return Err(ErrorKind::Redefine { name: ident.clone(), previous: prev.clone() });
         }
@@ -387,7 +387,7 @@ impl<'a> Program<'a> {
             }
             x @ ("right" | "rt" | "left" | "lt") => {
                 check_usage(call, None, false, in_expr, Some(1))?;
-                *script += if x.starts_with("r") { r#"<block s="turn">"# } else { r#"<block s="turnLeft">"# };
+                *script += if x.starts_with('r') { r#"<block s="turn">"# } else { r#"<block s="turnLeft">"# };
                 self.generate_expr_script(script, scopes, &call.args[0])?;
                 *script += "</block>";
             }
@@ -750,7 +750,7 @@ impl<'a> Program<'a> {
                 Item::Breed(Breed { plural, singular, .. }) => {
                     let info = Rc::new(RefCell::new(EntityInfo { props: Default::default(), placeins: Default::default(), plural: &plural.id, singular: &singular.id }));
                     for (ident, is_plural) in [(plural, true), (singular, false)] {
-                        program.validate_define_global(&ident)?;
+                        program.validate_define_global(ident)?;
                         assert!(program.breeds.insert(&ident.id, BreedSymbol { ident, is_plural, info: info.clone() }).is_none());
                     }
                 }
@@ -823,7 +823,7 @@ fn parse_breed_sprite<'b>(breed_sprites: &mut String, breed: &BreedSymbol, index
     assert!(breed.is_plural);
     let ang = 2.0 * f64c::PI * (index.0 as f64 / index.1 as f64);
     let radius = if index.1 >= 2 { 100.0 } else { 0.0 };
-    let color = HSV::new(ang as f32 * 180.0 / f32c::PI, 0.5, 0.9).to_rgb().to_inner();
+    let color = Hsv::new(ang as f32 * 180.0 / f32c::PI, 0.5, 0.9).to_rgb().to_inner();
 
     let escaped_name = escape_xml(&breed.ident.id);
     write!(breed_sprites, r#"<sprite name="{name}" x="{x}" y="{y}" heading="{heading}" hidden="true" color="{color}" pen="middle" scale="{scale}"><blocks></blocks><variables>"#,
@@ -845,7 +845,7 @@ fn parse_breed_sprite<'b>(breed_sprites: &mut String, breed: &BreedSymbol, index
             x = placein.x, y = placein.y,
             block_name = get_func_name(func),
             params = Punctuated(iter::once("<l></l>").cycle().take(func.params.len()), ""), // pass nothing by default
-            comment = placein.comment.as_ref().map(|c| format!(r#"<comment w="200" collapsed="false">{}</comment>"#, escape_xml(&c.content))).unwrap_or(String::new()),
+            comment = placein.comment.as_ref().map(|c| format!(r#"<comment w="200" collapsed="false">{}</comment>"#, escape_xml(&c.content))).unwrap_or_default(),
         ).unwrap();
     }
     *breed_sprites += "</scripts></sprite>";
@@ -861,11 +861,11 @@ fn parse_function<'a, 'b>(custom_blocks: &mut String, program: &Program<'a>, sco
         r#"<input type="%s"></input>"#.repeat(func.params.len())).unwrap();
 
     for param in func.params.iter() {
-        program.validate_define_lexical(param, &scopes)?;
+        program.validate_define_lexical(param, scopes)?;
         assert!(scopes.last_mut().unwrap().insert(&param.id, param).is_none());
     }
     let mut script = String::new();
-    program.generate_script(&mut script, scopes, &func.stmts, &func)?;
+    program.generate_script(&mut script, scopes, &func.stmts, func)?;
     if !script.is_empty() { // if we generate an empty <script> tag here, it makes the block uneditable in NetsBlox
         write!(custom_blocks, "<script>{}</script>", script).unwrap();
     }
@@ -893,7 +893,7 @@ fn parse_private<'b>(project_name: &str, input: &'b str) -> Result<String, Error
     let mut variables = String::new();
     let mut root_scope: LinkedHashMap<&str, &Ident> = GLOBAL_SCOPE_IDENTS.iter().map(|s| (s.id.as_str(), s)).collect();
     for breed in program.breeds.values().filter(|s| s.is_plural) {
-        assert!(root_scope.insert(breed.ident.id.as_str(), &breed.ident).is_none());
+        assert!(root_scope.insert(breed.ident.id.as_str(), breed.ident).is_none());
         write!(variables, r#"<variable name="{}"><list struct="atomic"></list></variable>"#, breed.ident.id.as_str()).unwrap();
     }
     for global in program.globals.values() {

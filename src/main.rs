@@ -18,7 +18,7 @@ fn main() {
     }
     else if input.ends_with(".nlogo") {
         let content = std::fs::read_to_string(input).expect("failed to open file");
-        let prog_stop = content.find("@#$#@#$#@").unwrap_or(content.len());
+        let prog_stop = content.find("@#$#@#$#@").unwrap_or_else(|| content.len());
         let program = &content[..prog_stop];
 
         match nl2xml::parse(&input[..input.len()-6], program) {

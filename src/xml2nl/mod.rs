@@ -36,7 +36,7 @@ fn rename_patch_prop(name: &str) -> &str {
 pub enum Error {
     /// The input was not valid xml.
     /// Impossible for a valid NetsBlox xml file.
-    InvalidXML,
+    InvalidXml,
     /// The input was not a valid NetsBlox project.
     /// Impossible for a valid NetsBlox xml file.
     InvalidProject,
@@ -91,29 +91,29 @@ fn clean_name(name: &str) -> Result<String, Error> {
 }
 
 #[derive(Debug)]
-struct XMLAttr {
+struct XmlAttr {
     name: String,
     value: String,
 }
 #[derive(Debug)]
-struct XML {
+struct Xml {
     name: String,
-    attrs: Vec<XMLAttr>,
-    children: Vec<XML>,
+    attrs: Vec<XmlAttr>,
+    children: Vec<Xml>,
     text: String,
 }
-impl XML {
-    fn get(&self, path: &[&str]) -> Option<&XML> {
+impl Xml {
+    fn get(&self, path: &[&str]) -> Option<&Xml> {
         match path {
             [] => Some(self),
             [first, rest @ ..] => self.children.iter().find(|x| x.name == *first).map(|x| x.get(rest)).flatten(),
         }
     }
-    fn attr(&self, name: &str) -> Option<&XMLAttr> {
+    fn attr(&self, name: &str) -> Option<&XmlAttr> {
         self.attrs.iter().find(|a| a.name == name)
     }
 }
-fn parse_xml_root<R: Read>(xml: &mut EventReader<R>, root_name: OwnedName, root_attrs: Vec<OwnedAttribute>) -> Result<XML, Error> {
+fn parse_xml_root<R: Read>(xml: &mut EventReader<R>, root_name: OwnedName, root_attrs: Vec<OwnedAttribute>) -> Result<Xml, Error> {
     let mut text = String::new();
     let mut children = vec![];
     loop {
@@ -123,16 +123,16 @@ fn parse_xml_root<R: Read>(xml: &mut EventReader<R>, root_name: OwnedName, root_
             }
             Ok(XmlEvent::EndElement { name }) => {
                 assert_eq!(name, root_name);
-                let attrs = root_attrs.into_iter().map(|a| XMLAttr {
+                let attrs = root_attrs.into_iter().map(|a| XmlAttr {
                     name: a.name.local_name,
                     value: a.value,
                 }).collect();
-                return Ok(XML { name: root_name.local_name, attrs, children, text });
+                return Ok(Xml { name: root_name.local_name, attrs, children, text });
             }
             Ok(XmlEvent::Characters(s)) | Ok(XmlEvent::CData(s)) => text += &s,
             Ok(XmlEvent::Comment(_)) | Ok(XmlEvent::Whitespace(_)) | Ok(XmlEvent::ProcessingInstruction { .. }) => (),
             Ok(x @ XmlEvent::StartDocument { .. }) | Ok(x @ XmlEvent::EndDocument) => panic!("{:?} at pos {:?}", x, xml.position()),
-            Err(_) => return Err(Error::InvalidXML),
+            Err(_) => return Err(Error::InvalidXml),
         }
     }
 }
@@ -159,19 +159,19 @@ struct Program {
     metadata: MetaData,
 }
 impl Program {
-    fn parse_bin_op_recursive(&mut self, op: &str, parent: &XML) -> Result<String, Error> {
+    fn parse_bin_op_recursive(&mut self, op: &str, parent: &Xml) -> Result<String, Error> {
         if parent.children.len() != 2 { return Err(Error::InvalidProject); }
         let a = self.parse_script_recursive(&parent.children[0])?;
         let b = self.parse_script_recursive(&parent.children[1])?;
         Ok(format!("({} {} {})", a, op, b))
     }
-    fn parse_unary_op_recursive(&mut self, op: &str, parent: &XML) -> Result<String, Error> {
+    fn parse_unary_op_recursive(&mut self, op: &str, parent: &Xml) -> Result<String, Error> {
         if parent.children.len() != 1 { return Err(Error::InvalidProject); }
         let val = self.parse_script_recursive(&parent.children[0])?;
         Ok(format!("({} {})", op, val))
     }
     
-    fn parse_script_recursive(&mut self, script: &XML) -> Result<String, Error> {
+    fn parse_script_recursive(&mut self, script: &Xml) -> Result<String, Error> {
         match script.name.as_str() {
             "script" => {
                 let mut res = vec![];
@@ -187,15 +187,13 @@ impl Program {
                 self.parse_script_recursive(&script.children[0])
             }
             "block" | "custom-block" => match script.attr("s") {
-                None => {
-                    if let Some(var) = script.attr("var") {
-                        Ok(var.value.clone())
-                    }
-                    else { return Err(Error::InvalidProject); }
+                None => match script.attr("var") {
+                    Some(var) => Ok(var.value.clone()),
+                    None => Err(Error::InvalidProject),
                 }
                 Some(block_type) => match block_type.value.as_str() {
-                    x @ "is %obj alive?" => return Err(Error::UseOfInternalBlock(x.to_string())),
-                    "%n clones" | "%n new %s" | "%n new %s (ordered)" => return Err(Error::CreateOutsideOfTell),
+                    x @ "is %obj alive?" => Err(Error::UseOfInternalBlock(x.to_string())),
+                    "%n clones" | "%n new %s" | "%n new %s (ordered)" => Err(Error::CreateOutsideOfTell),
 
                     "update background" => Ok(String::new()), // this is done automatically in netlogo, so it can compile into nothing
 
@@ -316,7 +314,7 @@ impl Program {
                     "reportMouseX" => Ok("mouse-xcor".into()),
                     "reportMouseY" => Ok("mouse-ycor".into()),
                     "doDeclareVariables" => match script.get(&["list"]) {
-                        None => return Err(Error::InvalidProject),
+                        None => Err(Error::InvalidProject),
                         Some(list) => {
                             let mut vars = vec![];
                             for item in list.children.iter() {
@@ -349,11 +347,11 @@ impl Program {
                             match (var_name.as_str(), is_set) {
                                 ("ticks", true) => match value.as_str() {
                                     "0" => Ok("reset-ticks".into()),
-                                    _ => return Err(Error::SetTicksToNonZero),
+                                    _ => Err(Error::SetTicksToNonZero),
                                 }
                                 ("ticks", false) => match value.as_str() {
                                     "1" => Ok("tick".into()),
-                                    _ => return Err(Error::ChangeTicksByNonOne),
+                                    _ => Err(Error::ChangeTicksByNonOne),
                                 }
 
                                 (_, true) => Ok(format!("set {} {}", var_name, value)),
@@ -385,14 +383,14 @@ impl Program {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         match script.children[0].name.as_str() {
                             "l" => Ok(rename_patch_prop(&clean_name(&script.children[0].text)?).into()),
-                            _ => return Err(Error::NonConstantPatchProp),
+                            _ => Err(Error::NonConstantPatchProp),
                         }
                     }
                     "color %s" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         match script.children[0].name.as_str() {
                             "l" => Ok(clean_name(&script.children[0].text)?),
-                            _ => return Err(Error::NonConstantColor),
+                            _ => Err(Error::NonConstantColor),
                         }
                     }
 
@@ -681,7 +679,7 @@ impl Program {
                     "reportBoolean" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         match script.get(&["l", "bool"]) {
-                            None => return Err(Error::NonConstantOperator),
+                            None => Err(Error::NonConstantOperator),
                             Some(x) => Ok(x.text.clone()),
                         }
                     }
@@ -700,7 +698,7 @@ impl Program {
                     "reportNot" => self.parse_unary_op_recursive("not", script),
                     
                     x => match self.functions.get(x) {
-                        None => return Err(Error::UnknownBlockType(x.to_string())),
+                        None => Err(Error::UnknownBlockType(x.to_string())),
                         Some(func) => {
                             let mut items = vec![func.name.clone()];
                             for param in script.children.iter() {
@@ -714,7 +712,7 @@ impl Program {
                 }
             }
             "l" => Ok(if NUMBER_REGEX.is_match(&script.text) { script.text.clone() } else { format!("\"{}\"", script.text) }),
-            x => return Err(Error::UnknownBlockType(x.to_string())),
+            x => Err(Error::UnknownBlockType(x.to_string())),
         }
     }
 }
@@ -762,7 +760,7 @@ impl Display for Program {
     }
 }
 
-fn parse_function_header(program: &mut Program, block: &XML) -> Result<(), Error> {
+fn parse_function_header(program: &mut Program, block: &Xml) -> Result<(), Error> {
     let t = surely(block.attr("s"))?.value.as_str();
     assert!(!t.starts_with('%'));
     
@@ -785,7 +783,7 @@ fn parse_function_header(program: &mut Program, block: &XML) -> Result<(), Error
     program.functions.insert(meta_name, Function { name, params, reports, formatted: None });
     Ok(())
 }
-fn parse_function_body(program: &mut Program, block: &XML) -> Result<(), Error> {
+fn parse_function_body(program: &mut Program, block: &Xml) -> Result<(), Error> {
     let t = surely(block.attr("s"))?.value.as_str();
     assert!(!t.starts_with('%'));
     let meta_name = PARAM_FINDER.replace_all(t, "%s").into_owned();
@@ -806,7 +804,7 @@ fn parse_function_body(program: &mut Program, block: &XML) -> Result<(), Error> 
     program.functions.get_mut(&meta_name).unwrap().formatted = Some(body);
     Ok(())
 }
-fn parse_sprite(program: &mut Program, sprite: &XML) -> Result<(), Error> {
+fn parse_sprite(program: &mut Program, sprite: &Xml) -> Result<(), Error> {
     let plural = clean_name(&surely(sprite.attr("name"))?.value)?;
 
     let mut props = LinkedHashMap::new();
@@ -816,13 +814,13 @@ fn parse_sprite(program: &mut Program, sprite: &XML) -> Result<(), Error> {
     }
 
     let entity = Entity { plural: plural.clone(), props };
-    if let Some(_) = program.entities.insert(plural.clone(), entity) {
+    if program.entities.insert(plural.clone(), entity).is_some() {
         return Err(Error::SpritesWithSameName(plural));
     }
 
     Ok(())
 }
-fn parse_project(room: &XML) -> Result<String, Error> {
+fn parse_project(room: &Xml) -> Result<String, Error> {
     let mut program = Program::default();
 
     // make sure we have a valid room setup (multiple rooms is for networking, which we don't support)
@@ -851,7 +849,7 @@ fn parse_project(room: &XML) -> Result<String, Error> {
         let t = surely(block.attr("s"))?.value.as_str();
         if t == "__meta" {
             let js = surely(block.get(&["script", "block", "block", "block", "l"]))?.text.trim();
-            if !js.starts_with("return") || !js.ends_with(";") { return Err(Error::InvalidProject) }
+            if !js.starts_with("return") || !js.ends_with(';') { return Err(Error::InvalidProject) }
             program.metadata = match serde_json::from_str(&js[6..js.len()-1]) {
                 Ok(v) => v,
                 Err(_) => return Err(Error::InvalidProject),

@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-lalrpop_mod!(grammar, "/nl2xml/grammar.rs");
+lalrpop_mod!(#[allow(clippy::all)] grammar, "/nl2xml/grammar.rs"); // clippy goes crazy on the generated code
 
 use lalrpop_util::ParseError;
 use lalrpop_util::lexer::Token;

@@ -6,7 +6,7 @@ pub fn parse_idents(input: &str) -> HashSet<&str> {
     let mut s = HashSet::new();
     for line in input.lines() {
         for name in line.split_whitespace() {
-            if name.starts_with("#") { break }
+            if name.starts_with('#') { break }
             debug_assert_eq!(name, name.to_lowercase());
             s.insert(name);
         }
@@ -18,11 +18,11 @@ pub fn parse_ws_pairs(input: &str) -> HashMap<&str, &str> {
     for line in input.lines() {
         let mut items = line.split_whitespace();
         if let Some(a) = items.next() {
-            if a.starts_with("#") { continue }
+            if a.starts_with('#') { continue }
             let b = items.next().unwrap();
-            debug_assert!(!b.starts_with("#"));
+            debug_assert!(!b.starts_with('#'));
             let c = items.next();
-            debug_assert!(c.is_none() || c.unwrap().starts_with("#"));
+            debug_assert!(c.is_none() || c.unwrap().starts_with('#'));
             debug_assert_eq!(s.insert(a, b), None);
         }
     }
