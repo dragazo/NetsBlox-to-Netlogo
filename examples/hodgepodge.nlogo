@@ -107,10 +107,11 @@ to go
             ]
         ]
         if false [
-            stamp cd pd pu
+            stamp pd pu
             let pdd? pen-mode = "down"
         ]
     ]))
+    cd
     tick
 end
 
