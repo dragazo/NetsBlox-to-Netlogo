@@ -510,6 +510,22 @@ impl<'a> Program<'a> {
                 self.generate_expr_script(script, scopes, &call.args[0])?;
                 *script += "</custom-block>";
             }
+            "clear-drawing" | "cd" => {
+                check_usage(call, None, false, in_expr, Some(0))?;
+                *script += r#"<block s="clear"></block>"#;
+            }
+            "stamp" => {
+                check_usage(call, None, false, in_expr, Some(0))?;
+                *script += r#"<block s="doStamp"></block>"#;
+            }
+            "pen-down" | "pd" => {
+                check_usage(call, None, false, in_expr, Some(0))?;
+                *script += r#"<block s="down"></block>"#;
+            }
+            "pen-up" | "pu" => {
+                check_usage(call, None, false, in_expr, Some(0))?;
+                *script += r#"<block s="up"></block>"#;
+            }
             x => match self.funcs.get(x) {
                 None => return Err(ErrorKind::FunctionNotDefined { name: call.name.clone(), suggested: SUGGESTIONS.get(x).copied() }),
                 Some(func) => {

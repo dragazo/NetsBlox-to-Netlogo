@@ -106,6 +106,10 @@ to go
                 ] [ set energy 10 (setxy random-xcor random-ycor) set color (list (random 256) (random 256) (random 256)) ]
             ]
         ]
+        if false [
+            stamp cd pd pu
+            let pdd? pen-mode = "down"
+        ]
     ]))
     tick
 end

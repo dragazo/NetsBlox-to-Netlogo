@@ -5,3 +5,4 @@ hidden hidden?
 mouse-down mouse-down?
 mouse-inside mouse-inside?
 atan2 atan
+clear-drawings clear-drawing

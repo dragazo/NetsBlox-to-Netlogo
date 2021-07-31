@@ -12,6 +12,7 @@ atan x: %'x' y: %'y'
 color %'name'
 set pen color to %'color'
 pen color
+pen mode
 
 set scale to %'scale' x
 scale

@@ -38,3 +38,5 @@ myself <custom-block s="asker"></custom-block>
 hidden? <block s="reportNot"><block s="reportShown"></block></block>
 
 timer <block s="getTimer"></block>
+
+pen-mode <custom-block s="pen mode"></custom-block>

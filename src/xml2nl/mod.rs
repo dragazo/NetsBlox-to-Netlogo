@@ -215,6 +215,12 @@ impl Program {
                     "mouse x" => Ok("mouse-xcor".into()),
                     "mouse y" => Ok("mouse-ycor".into()),
                     "mouse in stage?" => Ok("mouse-inside?".into()),
+                    "doStamp" => Ok("stamp".into()),
+                    "clear" => Ok("clear-drawing".into()),
+                    "down" => Ok("pen-down".into()),
+                    "up" => Ok("pen-up".into()),
+                    "pen mode" => Ok("pen-mode".into()),
+                    "getPenDown" => Ok(r#"(pen-mode = "down")"#.into()),
                     "ask %s and wait" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         let msg = self.parse_script_recursive(&script.children[0])?;
