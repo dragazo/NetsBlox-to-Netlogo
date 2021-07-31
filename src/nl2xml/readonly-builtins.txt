@@ -4,6 +4,11 @@
 random-xcor <custom-block s="random x position"></custom-block>
 random-ycor <custom-block s="random y position"></custom-block>
 
+mouse-xcor <custom-block s="mouse x"></custom-block>
+mouse-ycor <custom-block s="mouse y"></custom-block>
+mouse-down? <block s="reportMouseDown"></block>
+mouse-inside? <custom-block s="mouse in stage?"></custom-block>
+
 dx <custom-block s="dx of 1 step"></custom-block>
 dy <custom-block s="dy of 1 step"></custom-block>
 
@@ -31,3 +36,5 @@ self <custom-block s="self"></custom-block>
 myself <custom-block s="asker"></custom-block>
 
 hidden? <block s="reportNot"><block s="reportShown"></block></block>
+
+timer <block s="getTimer"></block>

@@ -27,6 +27,7 @@ reset patches
 reset global variables
 reset everything
 
+ask %'q' and wait
 self
 asker
 current patch
@@ -34,6 +35,9 @@ distance from x: %'x' y: %'y'
 distance from %'sprite'
 direction towards x: %'x' y: %'y'
 direction towards %'sprite'
+mouse x
+mouse y
+mouse in stage?
 
 set patch %'name' to %'value'
 change patch %'name' by %'value'

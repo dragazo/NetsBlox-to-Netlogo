@@ -51,7 +51,13 @@ to setup
         ht
         st
         set temp2 hidden?
+        reset-timer
+        set temp2 timer
     ]
+    let fx (list mouse-xcor mouse-ycor)
+    set fx mouse-down?
+    set fx mouse-inside?
+    if false [ let v user-input "what day is it?" ]
 end
 to go
     ask patches [

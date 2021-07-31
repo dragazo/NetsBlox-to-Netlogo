@@ -500,6 +500,16 @@ impl<'a> Program<'a> {
                 check_usage(call, None, false, in_expr, Some(0))?;
                 *script += r#"<block s="show"></block>"#;
             }
+            "reset-timer" => {
+                check_usage(call, None, false, in_expr, Some(0))?;
+                *script += r#"<block s="doResetTimer"></block>"#;
+            }
+            "user-input" => {
+                check_usage(call, None, true, in_expr, Some(1))?;
+                *script += r#"<custom-block s="ask %s and wait">"#;
+                self.generate_expr_script(script, scopes, &call.args[0])?;
+                *script += "</custom-block>";
+            }
             x => match self.funcs.get(x) {
                 None => return Err(ErrorKind::FunctionNotDefined { name: call.name.clone(), suggested: SUGGESTIONS.get(x).copied() }),
                 Some(func) => {

@@ -210,6 +210,16 @@ impl Program {
                     "hide" => Ok("hide-turtle".into()),
                     "show" => Ok("show-turtle".into()),
                     "reportShown" => Ok("(not hidden?)".into()),
+                    "doResetTimer" => Ok("reset-timer".into()),
+                    "getTimer" => Ok("timer".into()),
+                    "mouse x" => Ok("mouse-xcor".into()),
+                    "mouse y" => Ok("mouse-ycor".into()),
+                    "mouse in stage?" => Ok("mouse-inside?".into()),
+                    "ask %s and wait" => {
+                        if script.children.len() != 1 { return Err(Error::InvalidProject); }
+                        let msg = self.parse_script_recursive(&script.children[0])?;
+                        Ok(format!("(user-input {})", msg))
+                    }
                     "pick random 0 up to %n" => {
                         if script.children.len() != 1 { return Err(Error::InvalidProject); }
                         let max = self.parse_script_recursive(&script.children[0])?;

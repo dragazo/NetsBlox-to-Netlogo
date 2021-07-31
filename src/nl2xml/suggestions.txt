@@ -2,4 +2,6 @@
 any any?
 empty empty?
 hidden hidden?
+mouse-down mouse-down?
+mouse-inside mouse-inside?
 atan2 atan
