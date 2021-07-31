@@ -24,11 +24,11 @@ path = "src/main.rs"
 lalrpop = "0.19.6"
 
 [dependencies]
-xml-rs = "0.8.3"
+xml-rs = "0.8.4"
 lalrpop-util = "0.19.6"
 lazy_static = "1.4.0"
 linked-hash-map = "0.5.4"
 regex = "1.5.4"
 ordslice = "0.3.0"
-serde = { version = "1.0.126", features = ["derive"] }
-serde_json = "1.0.64"
+serde = { version = "1.0.127", features = ["derive"] }
+serde_json = "1.0.66"

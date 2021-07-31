@@ -36,7 +36,7 @@ fn rename_patch_prop(name: &str) -> &str {
 pub enum Error {
     /// The input was not valid xml.
     /// Impossible for a valid NetsBlox xml file.
-    InvalidXml,
+    InvalidXml { error: xml::reader::Error },
     /// The input was not a valid NetsBlox project.
     /// Impossible for a valid NetsBlox xml file.
     InvalidProject,
@@ -132,7 +132,7 @@ fn parse_xml_root<R: Read>(xml: &mut EventReader<R>, root_name: OwnedName, root_
             Ok(XmlEvent::Characters(s)) | Ok(XmlEvent::CData(s)) => text += &s,
             Ok(XmlEvent::Comment(_)) | Ok(XmlEvent::Whitespace(_)) | Ok(XmlEvent::ProcessingInstruction { .. }) => (),
             Ok(x @ XmlEvent::StartDocument { .. }) | Ok(x @ XmlEvent::EndDocument) => panic!("{:?} at pos {:?}", x, xml.position()),
-            Err(_) => return Err(Error::InvalidXml),
+            Err(error) => return Err(Error::InvalidXml { error }),
         }
     }
 }
