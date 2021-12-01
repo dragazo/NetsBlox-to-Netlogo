@@ -67,7 +67,7 @@ enum ErrorKind<'a> {
     FunctionNotDefined { name: Ident, suggested: Option<&'static str> },
 
     AssignToReadonlyVar { name: Ident },
-    
+
     InvalidColor { color_span: Span },
 
     FunctionArgCount { func: Ident, invoke_span: Span, got: usize, expected: usize, is_builtin: bool },
@@ -103,13 +103,13 @@ impl Error<'_> {
     }
     fn write_error(&self, f: &mut fmt::Formatter, msg: &str, span: Option<Span>, extra_msg: Option<&str>) -> fmt::Result {
         writeln!(f, "{}", msg)?;
-        
+
         if let Some(span) = span {
             writeln!(f)?;
 
             let start_index = self.line_starts.upper_bound(&span.0).saturating_sub(1);
             let end_index = self.line_starts.lower_bound(&span.1);
-            
+
             // grab all the referenced lines
             let mut lines = Vec::with_capacity(end_index - start_index);
             for i in start_index..end_index {
@@ -132,7 +132,7 @@ impl Error<'_> {
 
             let pos_prefix = format!("line {}: ", start_index + 1);
             let space_prefix = " ".repeat(pos_prefix.len());
-            
+
             if !lines.is_empty() {
                 writeln!(f, "| {}{}", pos_prefix, lines[0].unwrap_or(""))?;
                 for line in &lines[1..] {
@@ -147,7 +147,7 @@ impl Error<'_> {
         }
 
         if let Some(extra) = extra_msg { writeln!(f, "\n{}", extra)? }
-        
+
         Ok(())
     }
 }
@@ -169,7 +169,7 @@ impl Display for Error<'_> {
                 }
             }
             ErrorKind::FuncHeaderHadApos { name, .. } => self.write_error(f, &format!("function header had invalid symbol: {}", name.id), Some(name.span()), Some("function names and parameters may not contain apostrophes"))?,
-            
+
             ErrorKind::Redefine { name, previous } => self.write_error(f, &format!("redefined symbol: {}", name.id), Some(name.span()), Some(&format!("previously defined on line {}", self.get_line_num(previous.span().0))))?,
             ErrorKind::RedefineBuiltin { name } => self.write_error(f, &format!("redefined symbol: {}", name.id), Some(name.span()), Some("this is a built-in or reserved name"))?,
 
@@ -568,7 +568,7 @@ impl<'a> Program<'a> {
 
             Expr::Equ { a, b, .. } => { *script += r#"<block s="reportEquals">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
             Expr::Neq { a, b, .. } => { *script += r#"<block s="reportNot"><block s="reportEquals">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block></block>"; }
-            
+
             Expr::Less { a, b, .. } => { *script += r#"<block s="reportLessThan">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
             Expr::LessEq { a, b, .. } => { *script += r#"<block s="reportNot"><block s="reportGreaterThan">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block></block>"; }
             Expr::Great { a, b, .. } => { *script += r#"<block s="reportGreaterThan">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
@@ -576,13 +576,13 @@ impl<'a> Program<'a> {
 
             Expr::Add { a, b, .. } => { *script += r#"<block s="reportSum">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
             Expr::Sub { a, b, .. } => { *script += r#"<block s="reportDifference">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
-            
+
             Expr::Mul { a, b, .. } => { *script += r#"<block s="reportProduct">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
             Expr::Div { a, b, .. } => { *script += r#"<block s="reportQuotient">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
             Expr::Mod { a, b, .. } => { *script += r#"<block s="reportModulus">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
-            
+
             Expr::Pow { a, b, .. } => { *script += r#"<block s="reportPower">"#; self.generate_expr_script(script, scopes, a)?; self.generate_expr_script(script, scopes, b)?; *script += "</block>"; }
-            
+
             Expr::Not { val, .. } => { *script += r#"<block s="reportNot">"#; self.generate_expr_script(script, scopes, val)?; *script += "</block>"; }
             Expr::Neg { val, .. } => { *script += r#"<block s="reportMonadic"><l><option>neg</option></l>"#; self.generate_expr_script(script, scopes, val)?; *script += "</block>"; }
 
@@ -662,7 +662,7 @@ impl<'a> Program<'a> {
                 Stmt::FnCall(call) => self.format_func_call(script, scopes, call, false)?,
                 Stmt::VarDecl(vardecl) => {
                     self.validate_define_lexical(&vardecl.name, scopes)?; // check if the name is valid before we do anything else
-                    
+
                     write!(script, r#"<custom-block s="script variable %upvar = %s"><l>{}</l>"#, escape_xml(&vardecl.name.id)).unwrap();
                     self.generate_expr_script(script, scopes, &vardecl.value)?;
                     *script += "</custom-block>";
@@ -1029,7 +1029,7 @@ pub fn parse<'b>(project_name: &str, input: &'b str) -> Result<String, Error<'b>
     }
 
     assert_eq!(res.breeds.len(), 4);
-    
+
     let goats = res.breeds.get("goats").unwrap();
     let goat = res.breeds.get("goat").unwrap();
     assert!(goats.is_plural && !goat.is_plural);

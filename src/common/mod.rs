@@ -23,7 +23,8 @@ pub fn parse_ws_pairs(input: &str) -> HashMap<&str, &str> {
             debug_assert!(!b.starts_with('#'));
             let c = items.next();
             debug_assert!(c.is_none() || c.unwrap().starts_with('#'));
-            debug_assert_eq!(s.insert(a, b), None);
+            let prev = s.insert(a, b);
+            debug_assert_eq!(prev, None);
         }
     }
     s
@@ -35,7 +36,8 @@ pub fn parse_ws_rest(input: &str) -> HashMap<&str, &str> {
             if ident.starts_with('#') { continue }
             let res = line[ident.len()..].trim();
             debug_assert!(!res.is_empty());
-            debug_assert_eq!(s.insert(ident, res), None);
+            let prev = s.insert(ident, res);
+            debug_assert_eq!(prev, None);
         }
     }
     s
@@ -43,7 +45,8 @@ pub fn parse_ws_rest(input: &str) -> HashMap<&str, &str> {
 pub fn reverse_mapping<'a, 'b>(src: &HashMap<&'a str, &'b str>) -> HashMap<&'b str, &'a str> {
     let mut s = HashMap::with_capacity(src.len());
     for (&a, &b) in src.iter() {
-        debug_assert_eq!(s.insert(b, a), None); // src must be injective
+        let prev = s.insert(b, a);
+        debug_assert_eq!(prev, None); // src must be injective
     }
     s
 }
